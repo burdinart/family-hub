@@ -1,117 +1,97 @@
-// Глобальный store авторизации (Supabase Auth).
-// Хранит Session/профиль, слушает auth.stateChange, содержит базовые экшены.
-// Компоненты НЕ обращаются к Supabase напрямую — только через store/сервисы.
+// src/store/authStore.ts — глобальный store авторизации (Zustand + Supabase Auth).
+// Состояние: user (Profile | null), isLoading, error.
+// Компоненты не обращаются к Supabase напрямую — только через store и хуки.
 
 import { create } from 'zustand';
-import type { Session, User } from '@supabase/supabase-js';
-import { getSupabaseClient } from '../config/supabase';
-import type { UserProfile } from '../types';
+import { supabase } from '../config/supabase';
+import type { Profile } from '../types';
 
 interface AuthState {
-  /** Текущий Supabase пользователь (null — не залогинен) */
-  user: User | null;
-  session: Session | null;
-  /** Профиль из таблицы public.profiles */
-  profile: UserProfile | null;
-  loading: boolean;
+  /** Профиль из таблицы public.profiles (null — не авторизован / профиль не найден) */
+  user: Profile | null;
+  isLoading: boolean;
   error: string | null;
 
   // --- Actions ---
-  setProfile: (profile: UserProfile | null) => void;
+  setUser: (user: Profile | null) => void;
+  setLoading: (isLoading: boolean) => void;
   setError: (error: string | null) => void;
 
-  signUp: (email: string, password: string, fullName: string) => Promise<{ ok: boolean; needsConfirmation: boolean }>;
-  signIn: (email: string, password: string) => Promise<{ ok: boolean }>;
-  signOut: () => Promise<void>;
+  /**
+   * Инициализация: getSession() + загрузка профиля + подписка на onAuthStateChange.
+   * Возвращает функцию отписки (вызывается в cleanup эффекта).
+   */
+  initialize: () => Promise<() => void>;
 
-  /** Подписка на изменения состояния авторизации. Возвращает отписку. */
-  initAuthListener: () => () => void;
+  /** Загрузить профиль по id (используется при auth-событиях) */
+  fetchProfile: (userId: string) => Promise<void>;
 }
 
-/** Извлечение понятной ошибки из ответа Supabase */
-function fail(err: unknown): { message: string } {
-  const message = err instanceof Error ? err.message : String(err);
-  console.error('Auth error:', err);
-  return { message };
+/** Приведение строки БД к доменному Profile (points может отсутствовать → 0) */
+function toProfile(row: Record<string, unknown>): Profile {
+  return {
+    id: String(row.id),
+    email: String(row.email ?? ''),
+    full_name: String(row.full_name ?? ''),
+    avatar_url: (row.avatar_url as string | null) ?? null,
+    family_id: (row.family_id as string | null) ?? null,
+    points: Number(row.points ?? 0),
+    created_at: String(row.created_at ?? ''),
+  };
 }
 
-export const useAuthStore = create<AuthState>((set) => ({
+export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
-  session: null,
-  profile: null,
-  loading: true,
+  isLoading: true,
   error: null,
 
-  setProfile: (profile) => set({ profile }),
+  setUser: (user) => set({ user }),
+  setLoading: (isLoading) => set({ isLoading }),
   setError: (error) => set({ error }),
 
-  signUp: async (email, password, fullName) => {
+  fetchProfile: async (userId) => {
     try {
-      const { data, error } = await getSupabaseClient().auth.signUp({
-        email,
-        password,
-        options: { data: { full_name: fullName } },
-      });
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle(); // maybeSingle — не кидает ошибку, если профиля ещё нет
       if (error) throw error;
-      // Если в проекте включено подтверждение email — сессии сразу нет
-      return { ok: true, needsConfirmation: !data.session };
+      set({ user: data ? toProfile(data) : null });
     } catch (err) {
-      const { message } = fail(err);
-      set({ error: message });
-      return { ok: false, needsConfirmation: false };
+      set({ error: err instanceof Error ? err.message : String(err) });
     }
   },
 
-  signIn: async (email, password) => {
+  initialize: async () => {
+    set({ isLoading: true, error: null });
+
     try {
-      const { error } = await getSupabaseClient().auth.signInWithPassword({ email, password });
+      // 1. Первичное восстановление сессии из хранилища
+      const { data, error } = await supabase.auth.getSession();
       if (error) throw error;
-      set({ error: null });
-      return { ok: true };
+
+      if (data.session?.user) {
+        await get().fetchProfile(data.session.user.id);
+      } else {
+        set({ user: null });
+      }
+      set({ isLoading: false });
     } catch (err) {
-      const { message } = fail(err);
-      set({ error: message });
-      return { ok: false };
+      set({ isLoading: false, error: err instanceof Error ? err.message : String(err) });
     }
-  },
 
-  signOut: async () => {
-    try {
-      await getSupabaseClient().auth.signOut();
-    } catch (err) {
-      const { message } = fail(err);
-      set({ error: message });
-    }
-  },
-
-  initAuthListener: () => {
-    const supabase = getSupabaseClient();
-
-    // Первичное восстановление сессии из хранилища
-    supabase.auth
-      .getSession()
-      .then(({ data }) => {
-        set({
-          session: data.session,
-          user: data.session?.user ?? null,
-          loading: false,
-        });
-      })
-      .catch((err) => {
-        const { message } = fail(err);
-        set({ loading: false, error: message });
-      });
-
-    // Реакция на login/logout/refresh token
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      set({
-        session,
-        user: session?.user ?? null,
-        loading: false,
-        ...(session ? {} : { profile: null }),
-      });
+    // 2. Подписка на изменения состояния авторизации (login/logout/refresh)
+    const { data: sub } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (session?.user) {
+        await get().fetchProfile(session.user.id);
+      } else {
+        set({ user: null }); // logout — чистим профиль
+      }
+      set({ isLoading: false });
     });
 
+    // Возвращаем отписку для вызова в useEffect cleanup
     return () => sub.subscription.unsubscribe();
   },
 }));
