@@ -3,17 +3,21 @@
 // Компоненты не обращаются к Supabase напрямую — только через store и хуки.
 
 import { create } from 'zustand';
+import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../config/supabase';
 import type { Profile } from '../types';
 
 interface AuthState {
   /** Профиль из таблицы public.profiles (null — не авторизован / профиль не найден) */
   user: Profile | null;
+  /** Текущая auth-сессия Supabase (null — гость). Независима от наличия профиля. */
+  session: Session | null;
   isLoading: boolean;
   error: string | null;
 
   // --- Actions ---
   setUser: (user: Profile | null) => void;
+  setSession: (session: Session | null) => void;
   setLoading: (isLoading: boolean) => void;
   setError: (error: string | null) => void;
 
@@ -42,10 +46,12 @@ function toProfile(row: Record<string, unknown>): Profile {
 
 export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
+  session: null,
   isLoading: true,
   error: null,
 
   setUser: (user) => set({ user }),
+  setSession: (session) => set({ session }),
   setLoading: (isLoading) => set({ isLoading }),
   setError: (error) => set({ error }),
 
@@ -71,6 +77,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const { data, error } = await supabase.auth.getSession();
       if (error) throw error;
 
+      set({ session: data.session });
+
       if (data.session?.user) {
         await get().fetchProfile(data.session.user.id);
       } else {
@@ -81,8 +89,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ isLoading: false, error: err instanceof Error ? err.message : String(err) });
     }
 
-    // 2. Подписка на изменения состояния авторизации (login/logout/refresh)
+    // 2. Подписка на изменения состояния авторизации (login/logout/refresh).
+    // При возврате с Google это событие SIGNED_IN — обновляем сессию и профиль,
+    // ProtectedRoute в App.tsx сам перенаправит пользователя на "/".
     const { data: sub } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      set({ session });
       if (session?.user) {
         await get().fetchProfile(session.user.id);
       } else {

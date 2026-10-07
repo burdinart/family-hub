@@ -53,12 +53,17 @@ export function useAuth(): UseAuthResult {
       // приложения, поэтому к origin добавляем BASE_URL (папку деплоя из vite.config).
       // После возврата от Google сессия подхватится onAuthStateChange и ProtectedRoute
       // пустит нас на "/" автоматически.
+      // ТЗ требует redirectTo = origin + '/' — но на GitHub Pages origin это домен
+      // github.io БЕЗ папки приложения, поэтому добавляем BASE_URL (папку деплоя).
       const base = import.meta.env.BASE_URL ?? '/';
       const redirectTo = `${window.location.origin}${base === '/' ? '' : base.replace(/\/+$/, '')}/`;
-      const { error: oauthError } = await supabase.auth.signInWithOAuth({
+      const { data, error: oauthError } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: { redirectTo },
       });
+      // Если Supabase вернул URL авторизации, но браузер сам не редиректил
+      // (такое бывает в некоторых webview/строгой политике CSP) — редиректим вручную.
+      if (!oauthError && data.url) window.location.assign(data.url);
       if (oauthError) {
         if (/provider|not enabled|unsupported/i.test(oauthError.message)) {
           setError('Вход через Google не настроен в Supabase. Используйте вход по email.');
