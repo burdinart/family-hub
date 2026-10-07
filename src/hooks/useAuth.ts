@@ -27,10 +27,13 @@ export function useAuth(): UseAuthResult {
   const signInWithEmail = useCallback(
     async (email: string): Promise<{ ok: boolean; error?: string }> => {
       try {
-        // Magic link: Supabase отправит письмо со ссылкой для входа
+        // Magic link: Supabase отправит письмо со ссылкой для входа.
+        // Redirect URL строим так же, как для OAuth (с учётом папки деплоя на GitHub Pages)
+        const base = import.meta.env.BASE_URL ?? '/';
+        const emailRedirectTo = `${window.location.origin}${base === '/' ? '' : base.replace(/\/+$/, '')}/`;
         const { error: mailError } = await supabase.auth.signInWithOtp({
           email,
-          options: { emailRedirectTo: `${window.location.origin}/` },
+          options: { emailRedirectTo },
         });
         if (mailError) throw mailError;
         return { ok: true };
@@ -46,10 +49,15 @@ export function useAuth(): UseAuthResult {
   const signIn = useCallback(async (): Promise<{ ok: boolean; error?: string }> => {
     try {
       // OAuth Google: Supabase сам редиректит на accounts.google.com.
-      // Если провайдер не включён в проекте — получим ошибку, покажем понятное сообщение.
+      // ВАЖНО для GitHub Pages: window.location.origin это домен github.io без папки
+      // приложения, поэтому к origin добавляем BASE_URL (папку деплоя из vite.config).
+      // После возврата от Google сессия подхватится onAuthStateChange и ProtectedRoute
+      // пустит нас на "/" автоматически.
+      const base = import.meta.env.BASE_URL ?? '/';
+      const redirectTo = `${window.location.origin}${base === '/' ? '' : base.replace(/\/+$/, '')}/`;
       const { error: oauthError } = await supabase.auth.signInWithOAuth({
         provider: 'google',
-        options: { redirectTo: `${window.location.origin}/` },
+        options: { redirectTo },
       });
       if (oauthError) {
         if (/provider|not enabled|unsupported/i.test(oauthError.message)) {

@@ -1,23 +1,32 @@
 // src/pages/LoginPage.tsx — экран входа: Google OAuth или magic link по email.
 
-import { useState } from 'react';
-import { Mail, Users } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Loader2, Mail, Users } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 
 export function LoginPage() {
-  const { signIn, signInWithEmail } = useAuth();
+  const { signIn, signInWithEmail, error: authError } = useAuth();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [email, setEmail] = useState('');
   const [emailSent, setEmailSent] = useState(false);
+
+  // Ошибки инициализации сессии (getSession/onAuthStateChange из authStore)
+  // показываем прямо на экране логина понятным сообщением
+  useEffect(() => {
+    if (authError) setError(authError);
+  }, [authError]);
 
   const handleSignIn = async () => {
     setPending(true);
     setError(null);
     try {
       const result = await signIn();
-      if (!result.ok) setError(result.error ?? 'Не удалось войти');
-      // При успехе страница перезагрузится редиректом Supabase
+      if (!result.ok && result.error !== 'google_not_configured') {
+        setError('Не удалось начать вход через Google. Попробуйте email ниже.');
+      }
+      // При успехе браузер редиректит на accounts.google.com; после возврата
+      // сессию подхватит onAuthStateChange и ProtectedRoute пустит на "/"
     } finally {
       setPending(false);
     }
@@ -65,11 +74,14 @@ export function LoginPage() {
         className="flex w-full max-w-xs items-center justify-center gap-3 rounded-xl bg-white px-5 py-3 font-semibold text-gray-800 shadow-md ring-1 ring-gray-200 transition hover:bg-gray-50 disabled:opacity-60"
       >
         {pending ? (
-          <span className="h-5 w-5 animate-spin rounded-full border-2 border-gray-300 border-t-emerald-600" />
+          <>
+            <Loader2 size={20} className="animate-spin" aria-hidden="true" />
+            Перенаправляем в Google…
+          </>
         ) : (
           <>
-            {/* Иконка G (логотип Google рисуем текстом, чтобы не тянуть ассеты) */}
-            <span className="font-bold text-[#4285F4]" aria-hidden="true">G</span>
+            {/* Иконка G (логотип Google рисуем текстом, чтобы не тянуть внешние ассеты) */}
+            <span className="font-serif text-lg font-bold text-[#4285F4]" aria-hidden="true">G</span>
             Войти через Google
           </>
         )}
