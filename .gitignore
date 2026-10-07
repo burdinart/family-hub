@@ -1,1 +1,5 @@
-(empty)dist
+# Dependencies
+node_modules/
+
+# Build artifacts
+dist/
