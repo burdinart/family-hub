@@ -1,20 +1,19 @@
-// Хук жизненного цикла семьи: связывает authStore -> профиль -> familyStore.
+// Хук жизненного цикла данных: связывает authStore -> профиль -> familyStore.
 // Использование: в корневом компоненте приложения (App).
+// Real-time First: подписки на profiles и family пересылают состояние при
+// любых изменениях у других участников.
 
 import { useEffect } from 'react';
-import { doc, onSnapshot } from 'firebase/firestore';
-import { getDbInstance } from '../config/firebase';
+import type { RealtimeChannel, User } from '@supabase/supabase-js';
+import { getSupabaseClient } from '../config/supabase';
+import { mapProfile } from '../features/family/services/familyService';
+import { TABLES } from '../types/database';
 import { useAuthStore } from '../store/authStore';
 import { useFamilyStore } from '../store/familyStore';
-import type { UserProfile } from '../types';
 
-/** Firestore Timestamp | null -> Date | null */
-function toNullableDate(value: unknown): Date | null {
-  if (value && typeof value === 'object' && 'toDate' in value) {
-    const maybe = (value as { toDate: () => Date }).toDate();
-    return maybe instanceof Date ? maybe : null;
-  }
-  return null;
+/** Имя пользователя из user_metadata (Supabase Auth не имеет displayName) */
+function userDisplayName(user: User): string {
+  return (user.user_metadata?.full_name as string | undefined) ?? '';
 }
 
 export function useFamilySync() {
@@ -24,55 +23,82 @@ export function useFamilySync() {
   const subscribeToFamily = useFamilyStore((s) => s.subscribeToFamily);
   const clearFamily = useFamilyStore((s) => s.clearFamily);
 
-  // 1. Подписка на состояние авторизации
+  // 1. Подписка на состояние авторизации Supabase
   useEffect(() => {
     const unsubscribe = useAuthStore.getState().initAuthListener();
     return unsubscribe;
   }, []);
 
-  // 2. Профиль пользователя: real-time подписка на users/{uid}
+  // 2. Профиль пользователя: чтение + realtime-подписка на public.profiles
   useEffect(() => {
     if (!user) {
       setProfile(null);
       return;
     }
 
-    const profileRef = doc(getDbInstance(), 'users', user.uid);
-    const unsubscribe = onSnapshot(
-      profileRef,
-      (snapshot) => {
-        if (!snapshot.exists()) {
-          setProfile(null);
+    const supabase = getSupabaseClient();
+    let cancelled = false;
+
+    // Первичная загрузка профиля
+    void supabase
+      .from(TABLES.profiles)
+      .select('*')
+      .eq('id', user.id)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          console.error('Profile load error:', error);
+          useAuthStore.getState().setError(error.message);
           return;
         }
-        const data = snapshot.data();
-        const nextProfile: UserProfile = {
-          id: snapshot.id,
-          email: data.email ?? user.email ?? '',
-          displayName: data.displayName ?? user.displayName ?? '',
-          photoURL: data.photoURL ?? user.photoURL ?? null,
-          familyId: data.familyId ?? null,
-          createdAt: toNullableDate(data.createdAt),
-          updatedAt: toNullableDate(data.updatedAt),
-        };
-        setProfile(nextProfile);
-      },
-      (err) => {
-        console.error('Profile subscription error:', err);
-        useAuthStore.getState().setError(err.message);
-      },
-    );
+        if (data) {
+          setProfile(mapProfile(data, user.email, userDisplayName(user)));
+        } else {
+          // Триггер handle_new_user не сработал — создаём профиль минимально
+          void supabase
+            .from(TABLES.profiles)
+            .insert({ id: user.id, email: user.email ?? '', full_name: userDisplayName(user) })
+            .then(() => {
+              if (!cancelled) {
+                setProfile(mapProfile(
+                  { id: user.id, email: user.email ?? '', full_name: userDisplayName(user), avatar_url: null, family_id: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+                  user.email,
+                  userDisplayName(user),
+                ));
+              }
+            });
+        }
+      });
 
-    return unsubscribe;
+    // Realtime: изменения профиля (в т.ч. family_id после создания/вступления в семью)
+    const channel: RealtimeChannel = supabase
+      .channel(`profile:${user.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: TABLES.profiles, filter: `id=eq.${user.id}` },
+        (payload) => {
+          if (!cancelled && payload.new) {
+            setProfile(mapProfile(payload.new as never, user.email, userDisplayName(user)));
+          }
+        },
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      void supabase.removeChannel(channel);
+    };
   }, [user, setProfile]);
 
-  // 3. Семья: при появлении familyId в профиле — подписываемся на families/{id}
+  // 3. Семья: при появлении familyId в профиле — подписываемся на realtime семьи
   useEffect(() => {
-    if (!profile?.familyId) {
+    const familyId = profile?.familyId;
+    if (!familyId) {
       clearFamily();
       return;
     }
-    const unsubscribe = subscribeToFamily(profile);
+    const unsubscribe = subscribeToFamily(familyId);
     return unsubscribe;
-  }, [profile, subscribeToFamily, clearFamily]);
+  }, [profile?.familyId, subscribeToFamily, clearFamily]);
 }

@@ -21,7 +21,7 @@ export type DocumentCategory =
 /** Статус загрузки данных для real-time подписок */
 export type LoadStatus = 'idle' | 'loading' | 'ready' | 'error';
 
-/** Базовые поля Firestore-документа с временными метками */
+/** Базовые поля записи с временными метками (created_at / updated_at) */
 export interface TimestampedDoc {
   createdAt: Date | null;
   updatedAt: Date | null;

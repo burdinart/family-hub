@@ -1,32 +1,35 @@
-// Глобальный store семьи.
-// Real-time подписка на документ families/{familyId} через onSnapshot.
-// Компоненты НЕ обращаются к Firebase напрямую — только через этот store/сервисы.
+// Глобальный store семьи (Supabase).
+// Real-time подписка через channel postgres_changes на таблицы
+// families + family_members; данные загружаются через familyService.
+// Компоненты НЕ обращаются к Supabase напрямую — только через этот store/сервисы.
 
 import { create } from 'zustand';
-import { doc, onSnapshot, type Unsubscribe } from 'firebase/firestore';
-import { getDbInstance } from '../config/firebase';
-import type { Family, FamilyMember, LoadStatus, UserProfile } from '../types';
+import type { RealtimeChannel } from '@supabase/supabase-js';
+import { getSupabaseClient } from '../config/supabase';
+import { fetchFamily } from '../features/family/services/familyService';
+import { TABLES } from '../types/database';
+import type { Family, FamilyMember, LoadStatus } from '../types';
 
 interface FamilyState {
   /** Активная семья пользователя */
   family: Family | null;
-  /** Статус загрузки real-time данных */
+  /** Статус загрузки/подписки */
   status: LoadStatus;
   error: string | null;
 
-  // --- Selectors-хелперы (через getters в actions) ---
+  // --- Selectors-хелперы ---
   getMemberById: (userId: string) => FamilyMember | undefined;
 
   // --- Actions ---
-  setStatus: (status: LoadStatus) => void;
   setError: (error: string | null) => void;
   clearFamily: () => void;
-
+  /** Загрузить семью один раз (без realtime) */
+  loadFamily: (familyId: string) => Promise<void>;
   /**
-   * Подписка на Firestore-документ семьи по профилю пользователя.
-   * @returns функция отписки (вызывать в cleanup useEffect)
+   * Подписка на real-time изменения семьи по id.
+   * Возвращает функцию отписки (вызывать в cleanup useEffect).
    */
-  subscribeToFamily: (profile: UserProfile) => Unsubscribe;
+  subscribeToFamily: (familyId: string) => () => void;
 }
 
 export const useFamilyStore = create<FamilyState>((set, get) => ({
@@ -39,53 +42,56 @@ export const useFamilyStore = create<FamilyState>((set, get) => ({
     return family?.members.find((m) => m.userId === userId);
   },
 
-  setStatus: (status) => set({ status }),
   setError: (error) => set({ error }),
   clearFamily: () => set({ family: null, status: 'idle', error: null }),
 
-  subscribeToFamily: (profile) => {
-    const { setStatus, setError } = get();
+  loadFamily: async (familyId) => {
+    set({ status: 'loading' });
+    try {
+      const family = await fetchFamily(familyId);
+      set({ family, status: 'ready', error: null });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to load family';
+      console.error('Family load error:', err);
+      set({ family: null, status: 'error', error: message });
+    }
+  },
 
-    // Пользователь ещё не состоит в семье — выходим в состояние idle
-    if (!profile.familyId) {
+  subscribeToFamily: (familyId) => {
+    if (!familyId) {
       set({ family: null, status: 'ready' });
-      // no-op отписка
       return () => undefined;
     }
 
-    setStatus('loading');
+    void get().loadFamily(familyId);
 
-    const familyRef = doc(getDbInstance(), 'families', profile.familyId);
+    const supabase = getSupabaseClient();
 
-    // Real-time First: любые изменения у других участников мгновенно видны здесь
-    const unsubscribe = onSnapshot(
-      familyRef,
-      (snapshot) => {
-        if (!snapshot.exists()) {
-          // Семья удалена или нет прав на чтение
-          set({ family: null, status: 'ready', error: null });
-          return;
+    // Real-time First: любые изменения у других участников мгновенно видны здесь.
+    // При любом событии в таблицах семьи перезагружаем агрегированную модель
+    // (проще и надёжнее, чем инкрементально мержить rows).
+    const channel: RealtimeChannel = supabase
+      .channel(`family:${familyId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: TABLES.families, filter: `id=eq.${familyId}` },
+        () => void get().loadFamily(familyId),
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: TABLES.familyMembers, filter: `family_id=eq.${familyId}` },
+        () => void get().loadFamily(familyId),
+      )
+      .subscribe((state, err) => {
+        if (state === 'CHANNEL_ERROR') {
+          console.error('Family realtime channel error:', err);
+          set({ status: 'error', error: err?.message ?? 'Realtime connection failed' });
         }
-        const data = snapshot.data();
-        const family: Family = {
-          id: snapshot.id,
-          name: data.name ?? '',
-          ownerId: data.ownerId ?? '',
-          inviteCode: data.inviteCode ?? '',
-          members: data.members ?? [],
-          createdAt: data.createdAt?.toDate() ?? null,
-          updatedAt: data.updatedAt?.toDate() ?? null,
-        };
-        set({ family, status: 'ready', error: null });
-      },
-      (err) => {
-        // Всегда логируем и показываем понятную ошибку
-        console.error('Family subscription error:', err);
-        setStatus('error');
-        setError(err.message);
-      },
-    );
+      });
 
-    return unsubscribe;
+    // Функция отписки для useEffect cleanup
+    return () => {
+      void supabase.removeChannel(channel);
+    };
   },
 }));

@@ -11,7 +11,7 @@ export type RecurrenceRule = 'none' | 'daily' | 'weekly' | 'monthly';
 export interface CalendarEvent extends TimestampedDoc {
   id: string;
   familyId: string;
-  /** Firebase UID создателя события */
+  /** UUID создателя события (auth.users.id) */
   createdBy: string;
   title: string;
   description: string;

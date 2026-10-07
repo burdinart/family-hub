@@ -9,7 +9,7 @@ export interface Task extends TimestampedDoc {
   description: string;
   status: TaskStatus;
   priority: TaskPriority;
-  /** Firebase UID ответственного (null — не назначен) */
+  /** UUID ответственного (auth.users.id; null — не назначен) */
   assigneeId: string | null;
   dueDate: Date | null;
   /** Порядок в колонке (для drag-and-drop через @dnd-kit) */
