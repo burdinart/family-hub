@@ -1,13 +1,15 @@
-// src/pages/LoginPage.tsx — экран входа через Google OAuth.
+// src/pages/LoginPage.tsx — экран входа: Google OAuth или magic link по email.
 
 import { useState } from 'react';
-import { Users } from 'lucide-react';
+import { Mail, Users } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 
 export function LoginPage() {
-  const { signIn } = useAuth();
+  const { signIn, signInWithEmail } = useAuth();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [email, setEmail] = useState('');
+  const [emailSent, setEmailSent] = useState(false);
 
   const handleSignIn = async () => {
     setPending(true);
@@ -16,6 +18,22 @@ export function LoginPage() {
       const result = await signIn();
       if (!result.ok) setError(result.error ?? 'Не удалось войти');
       // При успехе страница перезагрузится редиректом Supabase
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const handleEmailSignIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPending(true);
+    setError(null);
+    try {
+      const result = await signInWithEmail(email.trim());
+      if (result.ok) {
+        setEmailSent(true);
+      } else {
+        setError(result.error ?? 'Не удалось отправить письмо');
+      }
     } finally {
       setPending(false);
     }
@@ -56,6 +74,41 @@ export function LoginPage() {
           </>
         )}
       </button>
+
+      {/* Вход по email (magic link) — работает при включённом провайдере Email в Supabase */}
+      {emailSent ? (
+        <p className="max-w-xs rounded-lg bg-emerald-50 px-4 py-3 text-center text-sm text-emerald-700">
+          Письмо со ссылкой для входа отправлено на {email}. Проверьте почту.
+        </p>
+      ) : (
+        <form
+          onSubmit={(e) => void handleEmailSignIn(e)}
+          className="flex w-full max-w-xs flex-col gap-2"
+        >
+          <label htmlFor="login-email" className="text-left text-sm text-gray-600">
+            или войдите по email
+          </label>
+          <div className="flex gap-2">
+            <input
+              id="login-email"
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@example.com"
+              className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+            />
+            <button
+              type="submit"
+              disabled={pending || !email.trim()}
+              className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow transition hover:bg-emerald-700 disabled:opacity-60"
+            >
+              <Mail size={16} aria-hidden="true" />
+              Войти
+            </button>
+          </div>
+        </form>
+      )}
     </main>
   );
 }
