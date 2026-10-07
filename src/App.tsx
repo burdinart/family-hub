@@ -57,7 +57,17 @@ export default function App() {
   }
 
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={import.meta.env.BASE_URL}>
+      {/* GitHub Pages SPA-fallback: 404.html сохраняет исходный путь в #redirect=...,
+          подхватываем его один раз и перенаправляем на нужный маршрут */}
+      {(() => {
+        const m = window.location.hash.match(/^#redirect=(.*)$/);
+        if (m) {
+          history.replaceState(null, '', window.location.pathname);
+          return <Navigate to={decodeURIComponent(m[1])} replace />;
+        }
+        return null;
+      })()}
       <Routes>
         {/* Публичный маршрут: вход */}
         <Route path="/login" element={<LoginPage />} />

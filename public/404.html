@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<title>Family Hub</title>
+<script>
+// SPA-fallback для GitHub Pages: прямой заход на /family-hub/tasks вернул бы 404.
+// Перенаправляем на index.html, сохраняя исходный путь в hash, чтобы его подхватил React Router.
+var base = '/family-hub/';
+var path = location.pathname.slice(base.length);
+location.replace(base + '#redirect=' + encodeURIComponent('/' + path));
+</script>
+</head>
+<body></body>
+</html>

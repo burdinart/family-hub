@@ -5,6 +5,9 @@ import { defineConfig } from 'vite';
 
 // https://vite.dev/config/
 export default defineConfig({
+  // Для GitHub Pages проект живёт в подпапке /family-hub/ (значение задаёт CI).
+  // Локально и на других хостингах — корень '/'.
+  base: process.env.VITE_BASE_URL ?? '/',
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
