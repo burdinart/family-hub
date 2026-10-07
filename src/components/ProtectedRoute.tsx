@@ -6,6 +6,7 @@ import { useAuthStore } from '../store/authStore';
 
 export function ProtectedRoute() {
   const user = useAuthStore((s) => s.user);
+  const session = useAuthStore((s) => s.session);
   const isLoading = useAuthStore((s) => s.isLoading);
 
   // Сессия ещё восстанавливается из хранилища — не редиректим раньше времени
@@ -17,7 +18,9 @@ export function ProtectedRoute() {
     );
   }
 
-  if (!user) return <Navigate to="/login" replace />;
+  // Пускаем и по сессии, даже если профиль ещё не создан триггером БД
+  // (иначе вход через Google «зависал» на /login при пустой таблице profiles)
+  if (!user && !session) return <Navigate to="/login" replace />;
 
   return <Outlet />;
 }

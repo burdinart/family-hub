@@ -7,6 +7,7 @@ import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import { supabase } from '../config/supabase';
 import { useAuth } from '../hooks/useAuth';
+import { useAuthStore } from '../store/authStore';
 
 interface Summary {
   activeTasks: number;
@@ -17,6 +18,11 @@ export function HomePage() {
   const { user, signOut } = useAuth();
   const [summary, setSummary] = useState<Summary | null>(null);
   const today = format(new Date(), 'EEEE, d MMMM', { locale: ru });
+
+  // Имя для приветствия: профиль из БД → иначе данные сессии Supabase (fallback)
+  const authUser = useAuthStore((s) => s.session?.user ?? null);
+  const displayName =
+    user?.full_name || user?.email || authUser?.user_metadata?.full_name || authUser?.email || 'друг';
 
   // Реальная статистика: задачи в статусе todo/in_progress и события с датой >= сегодня.
   // count-запрос безопасен при отсутствии family_id (фильтр is.null вернёт 0).
@@ -59,7 +65,7 @@ export function HomePage() {
       {/* Приветствие */}
       <section className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-gray-100">
         <h2 className="text-2xl font-bold text-gray-900">
-          Привет, {(user?.full_name || user?.email || 'друг').split(' ')[0]}! 👋
+          Привет, {displayName.split(' ')[0]}! 👋
         </h2>
         <p className="mt-1 text-sm capitalize text-gray-500">{today}</p>
         {user && (
@@ -68,6 +74,12 @@ export function HomePage() {
             <span>
               <b>{user.points}</b> баллов
             </span>
+          </p>
+        )}
+        {/* Если профиля в БД ещё нет — подсказка (например, триггер не применён) */}
+        {!user && (
+          <p className="mt-3 text-xs text-gray-400">
+            Профиль не найден в базе — выполните supabase/schema.sql в SQL Editor.
           </p>
         )}
         {/* Выход из аккаунта: signOut очистит сессию, ProtectedRoute редиректит на /login */}
