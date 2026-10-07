@@ -1,339 +1,253 @@
--- Family Hub: схема Supabase (PostgreSQL + RLS + Realtime)
--- Выполнить целиком в Supabase Studio -> SQL Editor.
--- Повторное выполнение безопасно (IF NOT EXISTS / DROP POLICY IF EXISTS).
+-- Family Hub: схема Supabase (PostgreSQL). Выполнить целиком в Supabase Studio -> SQL Editor.
+-- Идемпотентна: можно запускать повторно.
+-- Таблицы соответствуют src/types/app.ts: families, profiles, events, tasks,
+-- shopping_lists, shopping_items, marks, documents.
 
--- Вспомогательная функция: пользователь состоит в данной семье?
-create or replace function public.is_family_member(family uuid)
-returns boolean
-language sql
-stable
-security invoker
-as $$
-  select exists (
-    select 1
-    from public.family_members fm
-    where fm.family_id = family
-      and fm.user_id = auth.uid()
-  );
-$$;
+-- ============ 1. ТАБЛИЦЫ ============
 
--- =====================================================================
--- ПРОФИЛИ (сопоставлены с auth.users по id)
--- =====================================================================
-create table if not exists public.profiles (
-  id          uuid primary key references auth.users (id) on delete cascade,
-  email       text   not null default '',
-  full_name   text   not null default '',
-  avatar_url  text,
-  family_id   uuid,          -- FK добавлен ниже, чтобы избежать циклической зависимости
-  created_at  timestamptz not null default now(),
-  updated_at  timestamptz not null default now()
-);
-
--- =====================================================================
--- СЕМЬИ
--- =====================================================================
 create table if not exists public.families (
-  id          uuid primary key default gen_random_uuid(),
-  name        text not null,
-  owner_id    uuid not null references public.profiles (id),
-  invite_code text not null unique,
-  created_at  timestamptz not null default now(),
-  updated_at  timestamptz not null default now()
+  id         uuid primary key default gen_random_uuid(),
+  name       text not null,
+  created_at timestamptz not null default now()
 );
 
-alter table public.profiles
-  drop constraint if exists profiles_family_id_fkey;
-alter table public.profiles
-  add constraint profiles_family_id_fkey
-  foreign key (family_id) references public.families (id) on delete set null;
-
--- =====================================================================
--- УЧАСТНИКИ СЕМЬИ (роль + цвет; вместо jsonb-массива из Firestore-версии)
--- =====================================================================
-create table if not exists public.family_members (
-  family_id  uuid not null references public.families (id) on delete cascade,
-  user_id    uuid not null references public.profiles (id) on delete cascade,
-  role       text not null default 'member' check (role in ('owner', 'admin', 'member')),
-  nickname   text not null default '',
-  color      text not null default 'blue'
-             check (color in ('red','orange','amber','green','blue','violet')),
-  joined_at  timestamptz not null default now(),
-  primary key (family_id, user_id)
+create table if not exists public.profiles (
+  id         uuid primary key references auth.users (id) on delete cascade,
+  email      text not null,
+  full_name  text not null default '',
+  avatar_url text,
+  family_id  uuid references public.families (id) on delete set null,
+  points     integer not null default 0,
+  created_at timestamptz not null default now()
 );
 
--- =====================================================================
--- КАЛЕНДАРЬ
--- =====================================================================
 create table if not exists public.events (
-  id              uuid primary key default gen_random_uuid(),
-  family_id       uuid not null references public.families (id) on delete cascade,
-  created_by      uuid not null references public.profiles (id),
-  title           text not null,
-  description     text  not null default '',
-  start_at        timestamptz not null,
-  end_at          timestamptz not null,
-  all_day         boolean not null default false,
-  type            text not null default 'event' check (type in ('event','reminder','appointment')),
-  recurrence      text not null default 'none' check (recurrence in ('none','daily','weekly','monthly')),
-  participant_ids uuid[] not null default '{}',
-  created_at      timestamptz not null default now(),
-  updated_at      timestamptz not null default now()
+  id         uuid primary key default gen_random_uuid(),
+  family_id  uuid not null references public.families (id) on delete cascade,
+  title      text not null,
+  date       date not null,
+  time       time,                          -- null = событие весь день
+  category   text not null default 'event'
+             check (category in ('event','birthday','school','sports','medical','family','other')),
+  attendees  jsonb not null default '[]'::jsonb,  -- string[]: user_id участников
+  reminders  jsonb not null default '[]'::jsonb,  -- number[]: минуты до начала
+  created_by uuid not null references auth.users (id) on delete cascade,
+  created_at timestamptz not null default now()
 );
 
--- =====================================================================
--- ЗАДАЧИ
--- =====================================================================
 create table if not exists public.tasks (
   id          uuid primary key default gen_random_uuid(),
   family_id   uuid not null references public.families (id) on delete cascade,
   title       text not null,
-  description text not null default '',
-  status      text not null default 'todo' check (status in ('todo','in-progress','done')),
-  priority    text not null default 'medium' check (priority in ('low','medium','high')),
-  assignee_id uuid references public.profiles (id) on delete set null,
+  assignee_id uuid references auth.users (id) on delete set null,
+  status      text not null default 'todo' check (status in ('todo','doing','done')),
   due_date    date,
-  position    numeric not null default 0,   -- порядок в колонке (drag-and-drop)
-  created_at  timestamptz not null default now(),
-  updated_at  timestamptz not null default now()
+  priority    text not null default 'medium' check (priority in ('low','medium','high')),
+  category    text not null default 'other',
+  created_by  uuid not null references auth.users (id) on delete cascade,
+  created_at  timestamptz not null default now()
 );
 
--- =====================================================================
--- СПИСКИ ПОКУПОК (items — jsonb: [{id,name,quantity,checked}])
--- =====================================================================
 create table if not exists public.shopping_lists (
-  id        uuid primary key default gen_random_uuid(),
-  family_id uuid not null references public.families (id) on delete cascade,
-  name      text not null,
-  items     jsonb not null default '[]',
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  id         uuid primary key default gen_random_uuid(),
+  family_id  uuid not null references public.families (id) on delete cascade,
+  name       text not null,
+  created_by uuid not null references auth.users (id) on delete cascade,
+  created_at timestamptz not null default now()
 );
 
--- =====================================================================
--- ХРАНИЛИЩЕ ДОКУМЕНТОВ (файлы — в Storage bucket 'vault', путь {family_id}/{id})
--- =====================================================================
+create table if not exists public.shopping_items (
+  id         uuid primary key default gen_random_uuid(),
+  list_id    uuid not null references public.shopping_lists (id) on delete cascade,
+  name       text not null,
+  quantity   text not null default '',
+  checked    boolean not null default false,
+  added_by   uuid not null references auth.users (id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.marks (
+  id         uuid primary key default gen_random_uuid(),
+  family_id  uuid not null references public.families (id) on delete cascade,
+  name       text not null,
+  lat        double precision not null,
+  lng        double precision not null,
+  radius     integer not null default 200,   -- метры
+  category   text not null default 'other',
+  created_by uuid not null references auth.users (id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+
 create table if not exists public.documents (
   id          uuid primary key default gen_random_uuid(),
   family_id   uuid not null references public.families (id) on delete cascade,
-  uploaded_by uuid not null references public.profiles (id),
   name        text not null,
+  file_url    text not null,                 -- путь в Storage bucket 'vault'
   category    text not null default 'other'
-              check (category in ('passport','insurance','medical','education','contract','other')),
-  storage_path text not null,
-  mime_type   text not null default '',
-  size_bytes  bigint not null default 0,
-  created_at  timestamptz not null default now(),
-  updated_at  timestamptz not null default now()
+              check (category in ('passport','insurance','medical','contract','other')),
+  expiry_date date,
+  uploaded_by uuid not null references auth.users (id) on delete cascade,
+  created_at  timestamptz not null default now()
 );
 
--- =====================================================================
--- GPS-МЕТКИ
--- =====================================================================
-create table if not exists public.location_marks (
-  id         uuid primary key default gen_random_uuid(),
-  family_id  uuid not null references public.families (id) on delete cascade,
-  created_by uuid not null references public.profiles (id),
-  title      text not null,
-  address    text not null default '',
-  lat        double precision not null,
-  lng        double precision not null,
-  emoji      text not null default '📍',
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
+-- Индексы по family_id — все запросы идут с фильтром семьи
+create index if not exists events_family_idx      on public.events      (family_id);
+create index if not exists tasks_family_idx       on public.tasks       (family_id);
+create index if not exists lists_family_idx       on public.shopping_lists (family_id);
+create index if not exists items_list_idx         on public.shopping_items (list_id);
+create index if not exists marks_family_idx       on public.marks       (family_id);
+create index if not exists documents_family_idx   on public.documents   (family_id);
+create index if not exists profiles_family_idx    on public.profiles    (family_id);
 
--- Индексы для realtime-запросов по семье
-create index if not exists events_family_idx          on public.events (family_id, start_at);
-create index if not exists tasks_family_idx           on public.tasks (family_id, status, position);
-create index if not exists shopping_lists_family_idx  on public.shopping_lists (family_id);
-create index if not exists documents_family_idx       on public.documents (family_id);
-create index if not exists location_marks_family_idx  on public.location_marks (family_id);
-create index if not exists family_members_user_idx    on public.family_members (user_id);
+-- ============ 2. RLS: доступ только участникам своей семьи ============
 
--- =====================================================================
--- ROW LEVEL SECURITY: доступ только участникам семьи
--- =====================================================================
-alter table public.profiles        enable row level security;
-alter table public.families        enable row level security;
-alter table public.family_members  enable row level security;
-alter table public.events          enable row level security;
-alter table public.tasks           enable row level security;
-alter table public.shopping_lists  enable row level security;
-alter table public.documents       enable row level security;
-alter table public.location_marks  enable row level security;
+do $$
+begin
+  execute format('alter table public.%I enable row level security', 'families');
+  execute format('alter table public.%I enable row level security', 'profiles');
+  execute format('alter table public.%I enable row level security', 'events');
+  execute format('alter table public.%I enable row level security', 'tasks');
+  execute format('alter table public.%I enable row level security', 'shopping_lists');
+  execute format('alter table public.%I enable row level security', 'shopping_items');
+  execute format('alter table public.%I enable row level security', 'marks');
+  execute format('alter table public.%I enable row level security', 'documents');
+end $$;
 
--- Профили: читать может любой аутентифицированный (нужно для отображения
--- участников), изменять/создавать — только владелец профиля.
-drop policy if exists profiles_select on public.profiles;
-create policy profiles_select on public.profiles
-  for select to authenticated using (true);
+-- Вспомогательная функция: состоит ли текущий пользователь в семье
+create or replace function public.is_family_member(fam uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.profiles p
+    where p.id = auth.uid() and p.family_id = fam
+  );
+$$;
 
-drop policy if exists profiles_insert on public.profiles;
-create policy profiles_insert on public.profiles
-  for insert to authenticated with check (id = auth.uid());
-
-drop policy if exists profiles_update on public.profiles;
-create policy profiles_update on public.profiles
-  for update to authenticated using (id = auth.uid()) with check (id = auth.uid());
-
--- Семьи: видно и меняется участниками; удаление — только владельцем.
--- ВНИМАНИЕ: families_select не позволит проверить инвайт-код до вступления,
--- поэтому для присоединения используется SECURITY DEFINER функция join_family.
+-- families: читать/менять свою семью; создавать может любой авторизованный
 drop policy if exists families_select on public.families;
 create policy families_select on public.families
-  for select to authenticated using (is_family_member(id));
+  for select using (public.is_family_member(id));
 
 drop policy if exists families_insert on public.families;
 create policy families_insert on public.families
-  for insert to authenticated with check (owner_id = auth.uid());
+  for insert with check (auth.uid() is not null);
 
 drop policy if exists families_update on public.families;
 create policy families_update on public.families
-  for update to authenticated using (is_family_member(id)) with check (is_family_member(id));
+  for update using (public.is_family_member(id));
 
-drop policy if exists families_delete on public.families;
-create policy families_delete on public.families
-  for delete to authenticated using (owner_id = auth.uid());
+-- profiles: свой профиль — полные права; профили своей семьи — чтение
+drop policy if exists profiles_select on public.profiles;
+create policy profiles_select on public.profiles
+  for select using (id = auth.uid() or public.is_family_member(family_id));
 
--- Участники: чтение — участникам семьи; добавление — существующим участником
--- или самим собой (присоединение по инвайт-коду); удаление — себя или (владелец).
-drop policy if exists members_select on public.family_members;
-create policy members_select on public.family_members
-  for select to authenticated using (is_family_member(family_id));
+drop policy if exists profiles_insert on public.profiles;
+create policy profiles_insert on public.profiles
+  for insert with check (id = auth.uid());
 
-drop policy if exists members_insert on public.family_members;
-create policy members_insert on public.family_members
-  for insert to authenticated with check (is_family_member(family_id) or user_id = auth.uid());
+drop policy if exists profiles_update on public.profiles;
+create policy profiles_update on public.profiles
+  for update using (id = auth.uid());
 
--- Изменение роли возможно только owner/admin семьи.
-drop policy if exists members_update on public.family_members;
-create policy members_update on public.family_members
-  for update to authenticated
-  using (is_family_member(family_id))
-  with check (
-    is_family_member(family_id)
-    and (
-      role = 'member'
-      or exists (
-        select 1 from public.family_members admin
-        where admin.family_id = family_members.family_id
-          and admin.user_id = auth.uid()
-          and admin.role in ('owner','admin')
-      )
-    )
-  );
+-- Данные семьи (events/tasks/lists/items/marks/documents):
+-- выборка и изменение — участникам; удаление — автору записи
+drop policy if exists events_rw on public.events;
+create policy events_rw on public.events
+  for all
+  using (public.is_family_member(family_id))
+  with check (public.is_family_member(family_id) and created_by = auth.uid());
 
-drop policy if exists members_delete on public.family_members;
-create policy members_delete on public.family_members
-  for delete to authenticated
-  using (
-    is_family_member(family_id)
-    and (
-      user_id = auth.uid()
-      or exists (
-        select 1 from public.family_members admin
-        where admin.family_id = family_members.family_id
-          and admin.user_id = auth.uid()
-          and admin.role in ('owner','admin')
-      )
-    )
-  );
+drop policy if exists tasks_rw on public.tasks;
+create policy tasks_rw on public.tasks
+  for all
+  using (public.is_family_member(family_id))
+  with check (public.is_family_member(family_id) and created_by = auth.uid());
 
--- Остальные таблицы: полный CRUD для участников своей семьи.
-drop policy if exists events_crud on public.events;
-create policy events_crud on public.events
-  for all to authenticated
-  using (is_family_member(family_id))
-  with check (is_family_member(family_id) and created_by = auth.uid());
+drop policy if exists lists_rw on public.shopping_lists;
+create policy lists_rw on public.shopping_lists
+  for all
+  using (public.is_family_member(family_id))
+  with check (public.is_family_member(family_id) and created_by = auth.uid());
 
-drop policy if exists tasks_crud on public.tasks;
-create policy tasks_crud on public.tasks
-  for all to authenticated
-  using (is_family_member(family_id))
-  with check (is_family_member(family_id));
+-- shopping_items: права проверяются через родительский список
+drop policy if exists items_rw on public.shopping_items;
+create policy items_rw on public.shopping_items
+  for all
+  using (exists (
+    select 1 from public.shopping_lists l
+    where l.id = list_id and public.is_family_member(l.family_id)
+  ))
+  with check (exists (
+    select 1 from public.shopping_lists l
+    where l.id = list_id and public.is_family_member(l.family_id)
+  ));
 
-drop policy if exists shopping_crud on public.shopping_lists;
-create policy shopping_crud on public.shopping_lists
-  for all to authenticated
-  using (is_family_member(family_id))
-  with check (is_family_member(family_id));
+drop policy if exists marks_rw on public.marks;
+create policy marks_rw on public.marks
+  for all
+  using (public.is_family_member(family_id))
+  with check (public.is_family_member(family_id) and created_by = auth.uid());
 
-drop policy if exists documents_crud on public.documents;
-create policy documents_crud on public.documents
-  for all to authenticated
-  using (is_family_member(family_id))
-  with check (is_family_member(family_id) and uploaded_by = auth.uid());
+drop policy if exists documents_rw on public.documents;
+create policy documents_rw on public.documents
+  for all
+  using (public.is_family_member(family_id))
+  with check (public.is_family_member(family_id) and uploaded_by = auth.uid());
 
-drop policy if exists marks_crud on public.location_marks;
-create policy marks_crud on public.location_marks
-  for all to authenticated
-  using (is_family_member(family_id))
-  with check (is_family_member(family_id) and created_by = auth.uid());
+-- ============ 3. Создание семьи + вступление (RPC) ============
 
--- =====================================================================
--- RPC: присоединение к семье по инвайт-коду.
--- SECURITY DEFINER, чтобы пройти RLS до появления членства.
--- Возвращает id семьи; ошибка 'INVALID_CODE' — если код не найден.
--- =====================================================================
-create or replace function public.join_family(code text)
+-- Атомарно: создаёт семью и закрепляет её за профилем
+create or replace function public.create_family(family_name text)
 returns uuid
 language plpgsql
-security definer set search_path = public
+security definer
+set search_path = public
 as $$
-declare
-  fam_id uuid;
+declare new_id uuid;
 begin
-  select id into fam_id
-  from public.families
-  where invite_code = upper(trim(code))
-  limit 1;
-
-  if fam_id is null then
-    raise exception 'INVALID_CODE';
+  if auth.uid() is null then
+    raise exception 'not authenticated';
   end if;
-
-  insert into public.family_members (family_id, user_id, role)
-  values (fam_id, auth.uid(), 'member')
-  on conflict (family_id, user_id) do nothing;
-
-  update public.profiles set family_id = fam_id where id = auth.uid();
-
-  return fam_id;
+  insert into public.families (name) values (family_name) returning id into new_id;
+  update public.profiles set family_id = new_id where id = auth.uid();
+  return new_id;
 end $$;
 
-grant execute on function public.join_family(text) to authenticated;
-
--- =====================================================================
--- REALTIME: публикации изменений для клиентских подписок (идемпотентно)
--- =====================================================================
-do $$
-declare t text;
+-- Присоединение к существующей семье по id (код-приглашение реализуются позже)
+create or replace function public.join_family(fam uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
 begin
-  foreach t in array array['profiles','families','family_members','events','tasks','shopping_lists','documents','location_marks']
-  loop
-    begin
-      execute format('alter publication supabase_realtime add table public.%I', t);
-    exception when duplicate_object then
-      null; -- уже добавлена
-    end;
-  end loop;
+  if auth.uid() is null then
+    raise exception 'not authenticated';
+  end if;
+  if not exists (select 1 from public.families where id = fam) then
+    raise exception 'family not found';
+  end if;
+  update public.profiles set family_id = fam where id = auth.uid();
 end $$;
 
--- =====================================================================
--- TRIGGER: создание профиля при регистрации + авто-update updated_at
--- =====================================================================
+-- ============ 4. Триггер: профиль при регистрации ============
+
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
-security definer set search_path = public
+security definer
+set search_path = public
 as $$
 begin
   insert into public.profiles (id, email, full_name, avatar_url)
   values (
     new.id,
-    coalesce(new.email, ''),
-    coalesce(new.raw_user_meta_data ->> 'full_name', split_part(coalesce(new.email,''), '@', 1)),
+    new.email,
+    coalesce(new.raw_user_meta_data ->> 'full_name', split_part(new.email, '@', 1)),
     new.raw_user_meta_data ->> 'avatar_url'
   )
   on conflict (id) do nothing;
@@ -345,49 +259,35 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
 
-create or replace function public.set_updated_at()
-returns trigger language plpgsql as $$
-begin
-  new.updated_at = now();
-  return new;
-end $$;
+-- ============ 5. Realtime: все таблицы семьи в publication ============
 
 do $$
-declare t text;
 begin
-  foreach t in array array['profiles','families','events','tasks','shopping_lists','documents','location_marks']
-  loop
-    execute format('drop trigger if exists set_updated_at on public.%I', t);
-    execute format(
-      'create trigger set_updated_at before update on public.%I for each row execute function public.set_updated_at()', t);
-  end loop;
+  execute format('alter publication supabase_realtime add table public.%I', 'families');
+exception when duplicate_object then null;
 end $$;
 
--- =====================================================================
--- STORAGE: приватный бакет vault + политики «только участники семьи»
--- Путь файла: vault/{family_id}/{document_id}.{ext}
--- =====================================================================
+do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'profiles'); exception when duplicate_object then null; end $$;
+do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'events'); exception when duplicate_object then null; end $$;
+do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'tasks'); exception when duplicate_object then null; end $$;
+do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'shopping_lists'); exception when duplicate_object then null; end $$;
+do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'shopping_items'); exception when duplicate_object then null; end $$;
+do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'marks'); exception when duplicate_object then null; end $$;
+do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'documents'); exception when duplicate_object then null; end $$;
+
+-- ============ 6. Storage: приватный бакет «сейфа» ============
+
 insert into storage.buckets (id, name, public)
 values ('vault', 'vault', false)
 on conflict (id) do nothing;
 
-drop policy if exists "vault read for family members" on storage.objects;
-create policy "vault read for family members" on storage.objects
-  for select to authenticated
-  using (bucket_id = 'vault' and public.is_family_member((storage.foldername(name))[1]::uuid));
-
-drop policy if exists "vault insert for family members" on storage.objects;
-create policy "vault insert for family members" on storage.objects
-  for insert to authenticated
-  with check (bucket_id = 'vault' and public.is_family_member((storage.foldername(name))[1]::uuid));
-
-drop policy if exists "vault update for family members" on storage.objects;
-create policy "vault update for family members" on storage.objects
-  for update to authenticated
-  using (bucket_id = 'vault' and public.is_family_member((storage.foldername(name))[1]::uuid))
-  with check (bucket_id = 'vault' and public.is_family_member((storage.foldername(name))[1]::uuid));
-
-drop policy if exists "vault delete for family members" on storage.objects;
-create policy "vault delete for family members" on storage.objects
-  for delete to authenticated
-  using (bucket_id = 'vault' and public.is_family_member((storage.foldername(name))[1]::uuid));
+drop policy if exists vault_access on storage.objects;
+create policy vault_access on storage.objects
+  for all
+  using (bucket_id = 'vault' and public.is_family_member(
+    (split_part(name, '/', 1))::uuid
+  ))
+  with check (bucket_id = 'vault' and public.is_family_member(
+    (split_part(name, '/', 1))::uuid
+  ));
+-- Файлы хранятся по пути {family_id}/{document_id}.{ext}
