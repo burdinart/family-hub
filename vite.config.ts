@@ -5,13 +5,13 @@ import { defineConfig } from 'vite';
 
 // https://vite.dev/config/
 export default defineConfig({
-  // Для GitHub Pages проект живёт в подпапке /family-hub/ (значение задаёт CI).
-  // Локально и на других хостингах — корень '/'.
-  base: process.env.VITE_BASE_URL ?? '/',
+  // Базовый путь для деплоя подпапкой (GitHub Pages /family-hub/).
+  // VITE_BASE_URL=/ — для корневых доменов (Vercel, Netlify, свой хостинг).
+  base: process.env.VITE_BASE_URL ?? '/family-hub/',
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
-      // Краткий путь к src/: import ... from '@/config/firebase'
+      // Краткий путь к src/: import ... from '@/config/supabase'
       '@': path.resolve(__dirname, './src'),
     },
   },

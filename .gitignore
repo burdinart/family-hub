@@ -1,4 +1,5 @@
-(empty)dist
-node_modules/
-dist/
+/node_modules
+/dist
 .env.local
+*.local
+.DS_Store
