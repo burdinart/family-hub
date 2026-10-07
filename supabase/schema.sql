@@ -3,6 +3,11 @@
 -- Таблицы соответствуют src/types/app.ts: families, profiles, events, tasks,
 -- shopping_lists, shopping_items, marks, documents.
 
+-- ============ 0. Расширения (gen_random_uuid нужен для default id) ============
+-- Если этот блок падает с ошибкой permissions, выполните его отдельно role postgres:
+--   create extension if not exists pgcrypto with schema extensions;
+create extension if not exists pgcrypto;
+
 -- ============ 1. ТАБЛИЦЫ ============
 
 create table if not exists public.families (

@@ -57,12 +57,49 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   fetchProfile: async (userId) => {
     try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .maybeSingle(); // maybeSingle — не кидает ошибку, если профиля ещё нет
+      const load = async () =>
+        supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', userId)
+          .maybeSingle(); // maybeSingle — не кидает ошибку, если профиля ещё нет
+
+      let { data, error } = await load();
       if (error) throw error;
+
+      // Самовосстановление: триггер handle_new_user мог не сработать (схема применена
+      // уже после регистрации пользователя). Создаём профиль вручную — RLS-политика
+      // "profiles_insert" разрешает вставку строки со своим id.
+      if (!data) {
+        const authUser = supabase.auth.getUser().then((r) => r.data.user);
+        const u = await authUser;
+        const fullName =
+          (u?.user_metadata?.full_name as string | undefined) ??
+          (u?.user_metadata?.name as string | undefined) ??
+          (u?.email ? u.email.split('@')[0] : '');
+        const insert = await supabase
+          .from('profiles')
+          .insert({
+            id: userId,
+            email: u?.email ?? '',
+            full_name: fullName,
+            avatar_url: (u?.user_metadata?.avatar_url as string | undefined) ?? null,
+          })
+          .select('*')
+          .maybeSingle();
+        if (insert.error) {
+          // P23505/23505 unique_violation — гонка: строку создал триггер параллельно
+          if (insert.error.code === '23505' || /duplicate key/i.test(insert.error.message)) {
+            ({ data, error } = await load());
+            if (error) throw error;
+          } else {
+            throw insert.error;
+          }
+        } else {
+          data = insert.data;
+        }
+      }
+
       set({ user: data ? toProfile(data) : null });
     } catch (err) {
       set({ error: err instanceof Error ? err.message : String(err) });
