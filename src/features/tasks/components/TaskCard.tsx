@@ -40,33 +40,41 @@ export function TaskCard({ task }: TaskCardProps) {
   };
 
   return (
+    // overflow-hidden + break-words гарантируют, что длинное слово не «пробьёт» карточку
     <div
-      className={`rounded-lg border bg-white p-4 shadow-sm transition-opacity ${
-        isDone ? 'border-gray-200 opacity-60' : 'border-gray-200'
+      className={`min-h-[80px] overflow-hidden rounded-xl border border-gray-200 bg-white p-4 shadow-sm transition-shadow hover:shadow-md sm:p-5 ${
+        isDone ? 'opacity-60' : ''
       }`}
     >
-      <div className="flex items-start gap-3">
-        {/* Кнопка переключения статуса — крупная, не менее 44px по тач-зоне */}
+      <div className="flex items-start gap-2 sm:gap-3">
+        {/* Кнопка переключения статуса — крупная тач-зона, но компактнее (40px) */}
         <button
           onClick={handleStatusToggle}
           aria-label={isDone ? 'Вернуть в активные' : 'Отметить выполненной'}
-          className="-m-1 flex min-h-[44px] min-w-[44px] flex-shrink-0 items-center justify-center rounded-full hover:bg-gray-50 active:bg-gray-100"
+          className="flex min-h-[40px] min-w-[40px] flex-shrink-0 items-center justify-center rounded-full hover:bg-gray-50 active:bg-gray-100"
         >
           {isDone ? (
-            <CheckCircle2 className="text-green-600" size={24} />
+            <CheckCircle2 className="text-green-600" size={22} />
           ) : (
-            <Circle className="text-gray-400" size={24} />
+            <Circle className="text-gray-400" size={22} />
           )}
         </button>
 
+        {/* min-w-0 — ключ к переносу текста внутри flex: без него строка не сжимается */}
         <div className="min-w-0 flex-1">
-          <h3 className={`font-medium ${isDone ? 'text-gray-500 line-through' : 'text-gray-900'}`}>
+          {/* Название: 16px, font-medium, leading-snug, перенос по словам И по символам */}
+          <h3
+            className={`break-words text-base font-medium leading-snug [overflow-wrap:anywhere] ${
+              isDone ? 'text-gray-500 line-through' : 'text-gray-900'
+            }`}
+          >
             {task.title}
           </h3>
 
-          <div className="mt-2 flex flex-wrap items-center gap-2">
+          {/* Мета-информация: flex-wrap позволяет бейджам переходить на новую строку */}
+          <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-gray-600">
             <span
-              className={`rounded border px-2 py-1 text-xs font-medium ${PRIORITY_BADGE[task.priority]}`}
+              className={`rounded border px-2 py-0.5 text-xs font-medium ${PRIORITY_BADGE[task.priority]}`}
             >
               {PRIORITY_LABEL[task.priority]}
             </span>
@@ -80,12 +88,13 @@ export function TaskCard({ task }: TaskCardProps) {
           </div>
         </div>
 
+        {/* Компактная кнопка удаления (36px зона) — экономит место для текста */}
         <button
           onClick={handleDelete}
           aria-label="Удалить задачу"
-          className="-m-1 flex min-h-[44px] min-w-[44px] flex-shrink-0 items-center justify-center rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-600"
+          className="flex min-h-[36px] min-w-[36px] flex-shrink-0 items-center justify-center self-stretch rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-600"
         >
-          <Trash2 size={18} />
+          <Trash2 size={16} />
         </button>
       </div>
     </div>
