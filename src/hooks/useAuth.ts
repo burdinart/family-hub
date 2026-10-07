@@ -65,8 +65,12 @@ export function useAuth(): UseAuthResult {
       // (такое бывает в некоторых webview/строгой политике CSP) — редиректим вручную.
       if (!oauthError && data.url) window.location.assign(data.url);
       if (oauthError) {
+        // 400 validation_failed "Unsupported provider / provider is not enabled" —
+        // значит провайдер Google выключен в Supabase Studio → даём понятную инструкцию.
         if (/provider|not enabled|unsupported/i.test(oauthError.message)) {
-          setError('Вход через Google не настроен в Supabase. Используйте вход по email.');
+          setError(
+            'Вход через Google отключён на стороне Supabase. Включите его: Supabase Studio → Authentication → Sign In / Up → Providers → Google → Enable, и добавьте Redirect URL приложения. Либо войдите по email ниже.',
+          );
           return { ok: false, error: 'google_not_configured' };
         }
         throw oauthError;

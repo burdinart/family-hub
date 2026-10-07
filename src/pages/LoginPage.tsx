@@ -22,8 +22,12 @@ export function LoginPage() {
     setError(null);
     try {
       const result = await signIn();
-      if (!result.ok && result.error !== 'google_not_configured') {
-        setError('Не удалось начать вход через Google. Попробуйте email ниже.');
+      if (!result.ok) {
+        // google_not_configured: текст инструкции уже в authError (см. useEffect выше),
+        // для остальных ошибок — общий текст.
+        if (result.error !== 'google_not_configured') {
+          setError('Не удалось начать вход через Google. Попробуйте email ниже.');
+        }
       }
       // При успехе браузер редиректит на accounts.google.com; после возврата
       // сессию подхватит onAuthStateChange и ProtectedRoute пустит на "/"
