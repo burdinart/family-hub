@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { isSupabaseConfigured } from './config/supabase';
+
 import { useAuthStore } from './store/authStore';
 import { Layout } from './components/Layout';
 import { ProtectedRoute } from './components/ProtectedRoute';
@@ -56,8 +57,11 @@ export default function App() {
     );
   }
 
+  // basename = папка деплоя из Vite base; начальный путь читаем из hash-редиректа 404.html
+  const basename = import.meta.env.BASE_URL.replace(/\/+$/, '') || '/';
+
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={basename}>
       <Routes>
         {/* Публичный маршрут: вход */}
         <Route path="/login" element={<LoginPage />} />

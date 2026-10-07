@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Family Hub — редирект</title>
+    <!-- SPA fallback для GitHub Pages: пересохраняем путь и редиректим на index.html -->
+    <script>
+      var segment = '/family-hub/';
+      var path = location.pathname + location.search + location.hash;
+      sessionStorage.setItem('gha-react-router-path', path);
+      location.replace(segment + '#redirect=' + encodeURIComponent(path));
+    </script>
+  </head>
+  <body>Загрузка…</body>
+</html>
