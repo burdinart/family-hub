@@ -1,67 +1,117 @@
-// Глобальный store авторизации.
-// Хранит Firebase User, профиль (UserProfile) и статус подписки на auth-состояние.
+// Глобальный store авторизации (Supabase Auth).
+// Хранит Session/профиль, слушает auth.stateChange, содержит базовые экшены.
+// Компоненты НЕ обращаются к Supabase напрямую — только через store/сервисы.
 
 import { create } from 'zustand';
-import { onAuthStateChanged, signOut as fbSignOut, type User } from 'firebase/auth';
-import type { Unsubscribe } from 'firebase/auth';
-import { getAuthInstance } from '../config/firebase';
+import type { Session, User } from '@supabase/supabase-js';
+import { getSupabaseClient } from '../config/supabase';
 import type { UserProfile } from '../types';
 
 interface AuthState {
-  /** Текущий Firebase пользователь (null — не залогинен) */
+  /** Текущий Supabase пользователь (null — не залогинен) */
   user: User | null;
-  /** Профиль пользователя из Firestore */
+  session: Session | null;
+  /** Профиль из таблицы public.profiles */
   profile: UserProfile | null;
   loading: boolean;
   error: string | null;
 
   // --- Actions ---
-  setUser: (user: User | null) => void;
   setProfile: (profile: UserProfile | null) => void;
-  setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
-  logout: () => Promise<void>;
-  /** Подписка на изменения состояния авторизации (real-time first). */
+
+  signUp: (email: string, password: string, fullName: string) => Promise<{ ok: boolean; needsConfirmation: boolean }>;
+  signIn: (email: string, password: string) => Promise<{ ok: boolean }>;
+  signOut: () => Promise<void>;
+
+  /** Подписка на изменения состояния авторизации. Возвращает отписку. */
   initAuthListener: () => () => void;
+}
+
+/** Извлечение понятной ошибки из ответа Supabase */
+function fail(err: unknown): { message: string } {
+  const message = err instanceof Error ? err.message : String(err);
+  console.error('Auth error:', err);
+  return { message };
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
+  session: null,
   profile: null,
   loading: true,
   error: null,
 
-  setUser: (user) => set({ user }),
   setProfile: (profile) => set({ profile }),
-  setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error }),
 
-  logout: async () => {
+  signUp: async (email, password, fullName) => {
     try {
-      await fbSignOut(getAuthInstance());
+      const { data, error } = await getSupabaseClient().auth.signUp({
+        email,
+        password,
+        options: { data: { full_name: fullName } },
+      });
+      if (error) throw error;
+      // Если в проекте включено подтверждение email — сессии сразу нет
+      return { ok: true, needsConfirmation: !data.session };
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Sign-out failed';
-      console.error('Auth logout error:', err);
+      const { message } = fail(err);
+      set({ error: message });
+      return { ok: false, needsConfirmation: false };
+    }
+  },
+
+  signIn: async (email, password) => {
+    try {
+      const { error } = await getSupabaseClient().auth.signInWithPassword({ email, password });
+      if (error) throw error;
+      set({ error: null });
+      return { ok: true };
+    } catch (err) {
+      const { message } = fail(err);
+      set({ error: message });
+      return { ok: false };
+    }
+  },
+
+  signOut: async () => {
+    try {
+      await getSupabaseClient().auth.signOut();
+    } catch (err) {
+      const { message } = fail(err);
       set({ error: message });
     }
   },
 
   initAuthListener: () => {
-    const unsubscribe: Unsubscribe = onAuthStateChanged(
-      getAuthInstance(),
-      (user) => {
-        // Профиль подтягивает familyStore через подписку на users/{uid}
-        set({ user, loading: false, error: null });
-        if (!user) {
-          set({ profile: null });
-        }
-      },
-      (err) => {
-        console.error('Auth listener error:', err);
-        set({ loading: false, error: err.message });
-      },
-    );
-    // Возвращаем функцию отписки для использования в useEffect
-    return unsubscribe;
+    const supabase = getSupabaseClient();
+
+    // Первичное восстановление сессии из хранилища
+    supabase.auth
+      .getSession()
+      .then(({ data }) => {
+        set({
+          session: data.session,
+          user: data.session?.user ?? null,
+          loading: false,
+        });
+      })
+      .catch((err) => {
+        const { message } = fail(err);
+        set({ loading: false, error: message });
+      });
+
+    // Реакция на login/logout/refresh token
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      set({
+        session,
+        user: session?.user ?? null,
+        loading: false,
+        ...(session ? {} : { profile: null }),
+      });
+    });
+
+    return () => sub.subscription.unsubscribe();
   },
 }));

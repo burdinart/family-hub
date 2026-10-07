@@ -5,3 +5,4 @@ export * from './family';
 export * from './calendar';
 export * from './tasks';
 export * from './vault';
+export * from './database';
