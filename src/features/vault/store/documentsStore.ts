@@ -4,7 +4,7 @@
 
 import { create } from 'zustand';
 import type { Document, DocumentCategory } from '@/types';
-import { documentsService, type NewDocumentInput } from '../services/documentsService';
+import { describeError, documentsService, type NewDocumentInput } from '../services/documentsService';
 
 interface DocumentsState {
   documents: Document[];
@@ -33,11 +33,6 @@ interface DocumentsState {
   unsubscribeFromDocuments: () => void;
 }
 
-/** Извлечение понятного текста ошибки из неизвестного объекта */
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
 export const useDocumentsStore = create<DocumentsState>((set, get) => ({
   documents: [],
   isLoading: false,
@@ -58,7 +53,7 @@ export const useDocumentsStore = create<DocumentsState>((set, get) => ({
       set((state) => ({ documents: [doc, ...state.documents], isUploading: false }));
       return doc;
     } catch (err) {
-      set({ isUploading: false, error: `Ошибка загрузки файла: ${errorMessage(err)}` });
+      set({ isUploading: false, error: `Ошибка загрузки файла: ${describeError(err)}` });
       console.error('Document upload error:', err);
       return null;
     }
@@ -75,7 +70,7 @@ export const useDocumentsStore = create<DocumentsState>((set, get) => ({
       await documentsService.updateDocument(id, updates);
       return true;
     } catch (err) {
-      set({ documents: prev, error: `Не удалось сохранить изменения: ${errorMessage(err)}` });
+      set({ documents: prev, error: `Не удалось сохранить изменения: ${describeError(err)}` });
       console.error('Document update error:', err);
       return false;
     }
@@ -92,7 +87,7 @@ export const useDocumentsStore = create<DocumentsState>((set, get) => ({
       await documentsService.deleteDocument(id, target.file_path);
       return true;
     } catch (err) {
-      set({ documents: prev, error: `Не удалось удалить документ: ${errorMessage(err)}` });
+      set({ documents: prev, error: `Не удалось удалить документ: ${describeError(err)}` });
       console.error('Document delete error:', err);
       return false;
     }

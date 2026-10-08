@@ -8,6 +8,63 @@ import type { Document, DocumentCategory } from '@/types';
 /** Bucket в Supabase Storage для файлов сейфа */
 export const DOCUMENTS_BUCKET = 'documents';
 
+/**
+ * Человекочитаемое извлечение текста ошибки из ответа Supabase.
+ * ВАЖНО: ошибки PostgREST/Storage — это обычные объекты (не instanceof Error),
+ * поэтому String(err) давал «[object Object]» в UI. Берём message/details/hint,
+ * ищем code/status там, где они лежат у Storage-ошибок.
+ */
+export function describeError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'string') return err;
+  if (err && typeof err === 'object') {
+    const o = err as Record<string, unknown>;
+    const parts: string[] = [];
+    for (const key of ['message', 'error_description', 'msg'] as const) {
+      const v = o[key];
+      if (typeof v === 'string' && v.trim()) parts.push(v.trim());
+    }
+    // Storage-ошибки могут прятать текст во вложенном error/message
+    for (const nestedKey of ['error', 'cause'] as const) {
+      const nested = o[nestedKey];
+      if (nested && typeof nested === 'object') {
+        const msg = (nested as Record<string, unknown>).message;
+        if (typeof msg === 'string' && msg.trim() && !parts.includes(msg.trim())) {
+          parts.push(msg.trim());
+        }
+      } else if (typeof nested === 'string' && nested.trim()) {
+        parts.push(nested.trim());
+      }
+    }
+    const code = typeof o.code === 'string' ? o.code : undefined;
+    const status =
+      typeof o.statusCode === 'number'
+        ? o.statusCode
+        : typeof o.status === 'number'
+          ? o.status
+          : undefined;
+    const tag = [code, status].filter(Boolean).join(' / ');
+    const text = parts.join(' — ') || JSON.stringify(o);
+    return tag ? `${text} (${tag})` : text;
+  }
+  return String(err);
+}
+
+/** Понятные пояснения к частым ошибкам загрузки в Storage */
+function friendlyUploadHint(rawMessage: string): string {
+  const lower = rawMessage.toLowerCase();
+  if (lower.includes('row-level security') || lower.includes('policy')) {
+    return `${rawMessage}. Причина почти наверняка в политиках Storage: выполните раздел «6. Storage» из supabase/schema.sql в SQL Editor (политика documents_storage_access).`;
+  }
+  if (lower.includes('bucket not found') || (lower.includes('bucket') && lower.includes('exist'))) {
+    return `${rawMessage}. Проверьте, что в Supabase Studio → Storage создан bucket «${DOCUMENTS_BUCKET}» (публичный).`;
+  }
+  if (lower.includes('failed to fetch') || lower.includes('network')) {
+    return `${rawMessage}. Похоже на проблему сети или неверный VITE_SUPABASE_URL.`;
+  }
+  return rawMessage;
+}
+
 /** Допустимые MIME-типы загружаемых файлов (по ТЗ: JPG, PNG, PDF) */
 export const ALLOWED_MIME_TYPES: readonly string[] = [
   'image/jpeg',
@@ -156,7 +213,10 @@ export const documentsService = {
         contentType: file.type,
         upsert: false,
       });
-    if (uploadError) throw uploadError;
+    if (uploadError) {
+      // Приводим объект ошибки Storage к читаемому тексту + подсказка по причине
+      throw new Error(friendlyUploadHint(describeError(uploadError)));
+    }
 
     // 3. Публичный URL для просмотра (<img>/<iframe>)
     const {
@@ -187,7 +247,7 @@ export const documentsService = {
     if (dbError) {
       // Откат: убираем загруженный файл, если запись в БД не создана
       void supabase.storage.from(DOCUMENTS_BUCKET).remove([filePath]);
-      throw dbError;
+      throw new Error(describeError(dbError));
     }
 
     return toDocument(data as Record<string, unknown>);

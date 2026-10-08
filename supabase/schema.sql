@@ -355,7 +355,7 @@ on conflict (id) do update set public = excluded.public;
 
 drop policy if exists documents_storage_access on storage.objects;
 create policy documents_storage_access on storage.objects
-  for all
+  for all to authenticated
   using (bucket_id = 'documents' and public.is_family_member(
     (split_part(name, '/', 1))::uuid
   ))
