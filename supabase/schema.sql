@@ -111,11 +111,84 @@ begin
     execute 'alter table public.documents alter column title set not null';
   end if;
 end $$;
+-- ВАЖНО: сначала добавляем колонки, и только потом заполняем данные — иначе UPDATE/SET NOT NULL
+-- падают с «column does not exist», если таблица была создана по очень старой схеме.
 alter table public.documents add column if not exists file_path   text;
 alter table public.documents add column if not exists file_name   text;
-alter table public.documents add column if not exists file_size   bigint not null default 0;
-alter table public.documents add column if not exists mime_type   text not null default 'application/octet-stream';
+alter table public.documents add column if not exists file_size   bigint;
+alter table public.documents add column if not exists mime_type   text;
 alter table public.documents add column if not exists description text;
+
+-- Заполнение существующих строк — оборачиваем в проверку наличия колонок (идемпотентно)
+do $$
+begin
+  -- title <- name (если таблица была со старой схемой)
+  if exists (select 1 from information_schema.columns
+             where table_schema='public' and table_name='documents' and column_name='name')
+     and exists (select 1 from information_schema.columns
+             where table_schema='public' and table_name='documents' and column_name='title') then
+    execute 'update public.documents set title = coalesce(title, name) where title is null';
+  end if;
+
+  -- file_path <- извлечение пути объекта из file_url
+  if exists (select 1 from information_schema.columns
+             where table_schema='public' and table_name='documents' and column_name='file_path') then
+    update public.documents
+    set file_path = coalesce(
+          file_path,
+          nullif(substring(file_url from '/storage/v1/object/(?:public|sign)/[^/]+/(.+)$'), '')
+        );
+  end if;
+
+  -- file_name <- из имени файла в пути
+  if exists (select 1 from information_schema.columns
+             where table_schema='public' and table_name='documents' and column_name='file_name') then
+    update public.documents
+    set file_name = coalesce(
+          file_name,
+          nullif(reverse(split_part(reverse(coalesce(file_path, '')), '/', 1)), ''),
+          'документ'
+        );
+  end if;
+
+  -- mime_type <- по расширению файла (для старых записей)
+  if exists (select 1 from information_schema.columns
+             where table_schema='public' and table_name='documents' and column_name='mime_type') then
+    update public.documents
+    set mime_type = coalesce(mime_type, case
+          when coalesce(file_path, file_url) ~* '\.png$'  then 'image/png'
+          when coalesce(file_path, file_url) ~* '\jpe?g$' then 'image/jpeg'
+          when coalesce(file_path, file_url) ~* '\.pdf$'  then 'application/pdf'
+          else 'application/octet-stream' end);
+  end if;
+end $$;
+
+-- Приводим nullable-колонки к модели приложения (неотъемлемые поля новой схемы)
+do $$
+begin
+  begin alter table public.documents alter column file_size type bigint using coalesce(file_size, 0); exception when others then null; end;
+  update public.documents set file_size = coalesce(file_size, 0) where file_size is null;
+  alter table public.documents alter column file_size set default 0;
+  alter table public.documents alter column file_size set not null;
+
+  if exists (select 1 from information_schema.columns
+             where table_schema='public' and table_name='documents' and column_name='file_path') then
+    delete from public.documents where file_path is null; -- без пути нельзя удалить файл из Storage
+    alter table public.documents alter column file_path set not null;
+  end if;
+
+  if exists (select 1 from information_schema.columns
+             where table_schema='public' and table_name='documents' and column_name='file_name') then
+    alter table public.documents alter column file_name set not null;
+  end if;
+
+  if exists (select 1 from information_schema.columns
+             where table_schema='public' and table_name='documents' and column_name='mime_type') then
+    alter table public.documents alter column mime_type set not null;
+  end if;
+
+  begin alter table public.documents alter column title set not null; exception when others then null; end;
+end $$;
 
 -- Индексы по family_id — все запросы идут с фильтром семьи
 create index if not exists events_family_idx      on public.events      (family_id);
@@ -353,15 +426,45 @@ insert into storage.buckets (id, name, public)
 values ('documents', 'documents', true)
 on conflict (id) do update set public = excluded.public;
 
-drop policy if exists documents_storage_access on storage.objects;
-create policy documents_storage_access on storage.objects
-  for all to authenticated
-  using (bucket_id = 'documents' and public.is_family_member(
-    (split_part(name, '/', 1))::uuid
-  ))
-  with check (bucket_id = 'documents' and public.is_family_member(
-    (split_part(name, '/', 1))::uuid
-  ));
+-- Политика Storage: любой аутентифицированный участник семьи может читать/записывать/удалять
+-- объекты в папке своей семьи. Путь файла: {family_id}/{timestamp}-{random}.{ext}.
+-- split_part(...)::uuid защищён от некорректных путей: сравнение идёт через text,
+-- чтобы политика не падала на объектах с «не-uuid» первой папкой.
+drop policy if exists documents_storage_select on storage.objects;
+create policy documents_storage_select on storage.objects
+  for select to authenticated
+  using (
+    bucket_id = 'documents'
+    and public.is_family_member(
+      case when split_part(name, '/', 1) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+           then split_part(name, '/', 1)::uuid else null end
+    )
+  );
+
+drop policy if exists documents_storage_insert on storage.objects;
+create policy documents_storage_insert on storage.objects
+  for insert to authenticated
+  with check (
+    bucket_id = 'documents'
+    and public.is_family_member(
+      case when split_part(name, '/', 1) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+           then split_part(name, '/', 1)::uuid else null end
+    )
+  );
+
+drop policy if exists documents_storage_delete on storage.objects;
+create policy documents_storage_delete on storage.objects
+  for delete to authenticated
+  using (
+    bucket_id = 'documents'
+    and public.is_family_member(
+      case when split_part(name, '/', 1) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+           then split_part(name, '/', 1)::uuid else null end
+    )
+  );
+
+-- Обновлённая схема требует колонку file_path у записей БД; заполняем её из URL и включаем RLS
+-- (см. разделы 1–2 выше — скрипт идемпотентен).
 
 -- Совместимость: старый приватный бакет 'vault' — политики удаляем (файлы мигрируют в documents)
 drop policy if exists vault_access on storage.objects;
