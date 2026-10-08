@@ -130,36 +130,47 @@ begin
     execute 'update public.documents set title = coalesce(title, name) where title is null';
   end if;
 
-  -- file_path <- извлечение пути объекта из file_url
+  -- file_path <- извлечение пути объекта из file_url — тоже через EXECUTE (см. комментарий ниже)
   if exists (select 1 from information_schema.columns
              where table_schema='public' and table_name='documents' and column_name='file_path') then
-    update public.documents
+    execute $dyn$update public.documents
     set file_path = coalesce(
           file_path,
           nullif(substring(file_url from '/storage/v1/object/(?:public|sign)/[^/]+/(.+)$'), '')
-        );
+        )$dyn$;
   end if;
 
-  -- file_name <- из имени файла в пути
+  -- file_name <- из имени файла в пути.
+  -- ВАЖНО: UPDATE с явным перечислением колонок в SET падает на этапе ПАРСИНГА всего
+  -- do-блока, если хотя бы одной колонки ещё нет (42703), даже при защите через if exists.
+  -- Поэтому все обращения к новым колонкам выполняем только через EXECUTE динамического SQL.
   if exists (select 1 from information_schema.columns
              where table_schema='public' and table_name='documents' and column_name='file_name') then
-    update public.documents
+    execute $dyn$update public.documents
     set file_name = coalesce(
           file_name,
           nullif(reverse(split_part(reverse(coalesce(file_path, '')), '/', 1)), ''),
           'документ'
-        );
+        )$dyn$;
   end if;
 
-  -- mime_type <- по расширению файла (для старых записей)
+  -- mime_type <- по расширению файла (для старых записей) — тоже через EXECUTE
   if exists (select 1 from information_schema.columns
              where table_schema='public' and table_name='documents' and column_name='mime_type') then
-    update public.documents
+    execute $dyn$update public.documents
     set mime_type = coalesce(mime_type, case
           when coalesce(file_path, file_url) ~* '\.png$'  then 'image/png'
-          when coalesce(file_path, file_url) ~* '\jpe?g$' then 'image/jpeg'
+          when coalesce(file_path, file_url) ~* '\.jpe?g$' then 'image/jpeg'
           when coalesce(file_path, file_url) ~* '\.pdf$'  then 'application/pdf'
-          else 'application/octet-stream' end);
+          else 'application/octet-stream' end)$dyn$;
+  end if;
+
+  -- title <- name + NOT NULL (универсальный случай: таблица уже новая, без колонки name).
+  execute 'update public.documents set title = coalesce(title, ''Документ'') where title is null';
+  begin
+    execute 'alter table public.documents alter column title set not null';
+  exception when others then
+    null;
   end if;
 end $$;
 
@@ -173,8 +184,13 @@ begin
 
   if exists (select 1 from information_schema.columns
              where table_schema='public' and table_name='documents' and column_name='file_path') then
-    delete from public.documents where file_path is null; -- без пути нельзя удалить файл из Storage
-    alter table public.documents alter column file_path set not null;
+    -- НЕ удаляем строки без file_path: путь извлекается из file_url выше, а если он
+    -- всё же пуст — приложение восстанавливает его из URL (getFilePathFromUrl).
+    begin
+      execute 'alter table public.documents alter column file_path set not null';
+    exception when others then
+      null;
+    end;
   end if;
 
   if exists (select 1 from information_schema.columns

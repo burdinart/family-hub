@@ -28,16 +28,37 @@ begin
   end if;
 end $$;
 
--- 2. Совместимость со старой схемой (колонка name вместо title): переносим название.
+-- 2. Гарантируем наличие колонки title (в старой схеме её не было — была name).
+--    ВАЖНО: в PL/pgSQL нельзя сослаться на ещё НЕ существующую колонку даже внутри
+--    if exists(...) — планировщик проверяет имена на этапе парсинга блока
+--    (ошибка «42703: column "title" does not exist»). Поэтому все обращения к
+--    title/name выполняются только через EXECUTE динамического SQL.
+alter table if exists public.documents add column if not exists title text;
+
 do $$
+declare
+  has_title boolean;
+  has_name  boolean;
 begin
-  if exists (select 1 from information_schema.columns
-             where table_schema='public' and table_name='documents' and column_name='name') then
-    execute 'update public.documents set title = name where title is null';
+  select exists(select 1 from information_schema.columns
+                where table_schema='public' and table_name='documents' and column_name='title')
+    into has_title;
+  select exists(select 1 from information_schema.columns
+                where table_schema='public' and table_name='documents' and column_name='name')
+    into has_name;
+
+  -- Переносим название из старой колонки name в новую title (если name существует)
+  if has_name then
+    execute 'update public.documents set title = coalesce(title, name) where title is null';
+  end if;
+
+  -- Если остались строки без названия — ставим заглушку, чтобы можно было NOT NULL
+  if has_title then
+    execute 'update public.documents set title = ''Документ'' where title is null';
     begin
       execute 'alter table public.documents alter column title set not null';
     exception when others then
-      null; -- если остались null-строки — разберитесь вручную, не критично для загрузки новых
+      null;
     end;
   end if;
 end $$;
@@ -69,7 +90,41 @@ create policy documents_storage_access on storage.objects
 -- Старый приватный бакет vault больше не используется
 drop policy if exists vault_access on storage.objects;
 
--- 4. Realtime для таблицы documents (чтобы список обновлялся на всех устройствах)
+-- 4. Заполнение новых колонок для СТАРЫХ записей (только если колонки уже созданы выше).
+--    Все обращения — через EXECUTE динамического SQL (см. комментарий в блоке 2).
+do $$
+declare
+  has_col text;
+begin
+  foreach has_col in array array['file_path','file_name','mime_type'] loop
+    if exists (select 1 from information_schema.columns
+               where table_schema='public' and table_name='documents' and column_name=has_col) then
+      if has_col = 'file_path' then
+        execute $dyn$update public.documents
+        set file_path = coalesce(
+              nullif(file_path, ''),
+              nullif(substring(coalesce(file_url,'') from '/storage/v1/object/(?:public|sign)/[^/]+/(.+)$'), '')
+            )$dyn$;
+      elsif has_col = 'file_name' then
+        execute $dyn$update public.documents
+        set file_name = coalesce(
+              nullif(file_name, ''),
+              nullif(reverse(split_part(reverse(coalesce(file_path,'')), '/', 1)), ''),
+              'документ'
+            )$dyn$;
+      else
+        execute $dyn$update public.documents
+        set mime_type = coalesce(nullif(mime_type, ''), case
+              when coalesce(file_path, file_url, '') ~* '\.png$'   then 'image/png'
+              when coalesce(file_path, file_url, '') ~* '\.jpe?g$' then 'image/jpeg'
+              when coalesce(file_path, file_url, '') ~* '\.pdf$'   then 'application/pdf'
+              else 'application/octet-stream' end)$dyn$;
+      end if;
+    end if;
+  end loop;
+end $$;
+
+-- 5. Realtime для таблицы documents (чтобы список обновлялся на всех устройствах)
 do $$
 begin
   begin
@@ -79,6 +134,6 @@ begin
   end;
 end $$;
 
--- 5. Принудительная перезагрузка кэша схемы PostgREST — УСТАНАВЛИВАЕТ ошибку PGRST204,
+-- 6. Принудительная перезагрузка кэша схемы PostgREST — УСТАНАВЛИВАЕТ ошибку PGRST204,
 --    если колонки уже были добавлены ранее, но кэш остался устаревшим.
 notify pgrst, 'reload schema';
