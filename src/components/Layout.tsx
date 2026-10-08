@@ -1,8 +1,8 @@
 // src/components/Layout.tsx — каркас приложения: контент + нижняя навигация (mobile-first).
-// Навигация: Главная, Календарь, Задачи, Расписание, Сейф (иконки lucide-react).
+// Навигация: Главная, Календарь, Задачи, Расписание, Чат, Сейф (иконки lucide-react).
 
 import { NavLink, Outlet } from 'react-router-dom';
-import { CalendarDays, Home, Lock, ListChecks, CalendarClock } from 'lucide-react';
+import { CalendarDays, Home, Lock, ListChecks, CalendarClock, MessageCircle } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 
@@ -17,6 +17,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/calendar', label: 'Календарь', icon: CalendarDays },
   { to: '/tasks', label: 'Задачи', icon: ListChecks },
   { to: '/schedule', label: 'Распис.', icon: CalendarClock },
+  { to: '/chat', label: 'Чат', icon: MessageCircle },
   { to: '/vault', label: 'Сейф', icon: Lock },
 ];
 

@@ -465,3 +465,53 @@ create policy documents_storage_delete on storage.objects
 drop policy if exists vault_access on storage.objects;
 
 -- Файлы хранятся по пути {family_id}/{timestamp}-{random}.{ext}
+
+-- ============================================================
+-- 12. Семейный чат: messages (добавлено по ТЗ «Семейный чат»)
+-- Индекс (family_id, created_at DESC) уже создан в боевой БД;
+-- здесь он идемпотентен и для чистой установки.
+-- ============================================================
+
+create table if not exists public.messages (
+  id uuid primary key default gen_random_uuid(),
+  family_id uuid not null references public.families(id) on delete cascade,
+  sender_id uuid references public.profiles(id) on delete set null,
+  text text not null check (char_length(text) between 1 and 4000),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists messages_family_created_idx
+  on public.messages (family_id, created_at desc);
+
+alter table public.messages enable row level security;
+
+drop policy if exists "family_members_select_messages" on public.messages;
+create policy "family_members_select_messages" on public.messages
+  for select to authenticated using (is_family_member(family_id));
+
+-- Вставлять сообщение можно только от своего имени и в свою семью
+drop policy if exists "family_members_insert_messages" on public.messages;
+create policy "family_members_insert_messages" on public.messages
+  for insert to authenticated with check (
+    is_family_member(family_id) and sender_id = (select auth.uid())
+  );
+
+-- Удалять — только свои сообщения (админ семьи — любые, на случай модерации)
+drop policy if exists "family_members_delete_messages" on public.messages;
+create policy "family_members_delete_messages" on public.messages
+  for delete to authenticated using (
+    is_family_member(family_id)
+    and (sender_id = (select auth.uid()) or is_family_admin(family_id))
+  );
+
+-- Realtime для сообщений семьи
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public' and tablename = 'messages'
+  ) then
+    alter publication supabase_realtime add table public.messages;
+  end if;
+end $$;

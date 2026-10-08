@@ -24,3 +24,21 @@ export type DocumentCategory =
   | 'education'
   | 'property'
   | 'other';
+
+/** Сообщение семейного чата (таблица messages) */
+export interface Message {
+  id: string;
+  family_id: string;
+  /** uuid профиля отправителя (null — если профиль удалён) */
+  sender_id: string | null;
+  text: string;
+  created_at: string;
+  /**
+   * Виртуальное поле для отображения (не колонка БД):
+   * подгружается из таблицы profiles при загрузке истории.
+   */
+  sender?: {
+    full_name: string;
+    avatar_url: string | null;
+  };
+}
