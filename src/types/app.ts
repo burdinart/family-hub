@@ -1,7 +1,7 @@
 // src/types/app.ts — доменные интерфейсы приложения по ТЗ «Промпт 0 (Supabase)».
 // Имена совпадают с полями таблиц Supabase; значения jsonb парсятся в типизированные массивы.
 
-import type { DocumentCategory, TaskPriority, TaskStatus } from './index';
+import type { DocumentCategory, ScheduleColor, TaskPriority, TaskStatus } from './index';
 
 
 /** Профиль пользователя (таблица profiles, id == auth.users.id) */
@@ -92,4 +92,20 @@ export interface Document {
   created_at: string;
 }
 
-/** Позиция участника семьи (таблица family_members, для ролей/цветов) */
+/** Регулярное занятие (таблица schedule) — недельное расписание семьи */
+export interface Schedule {
+  id: string;
+  family_id: string;
+  title: string;
+  /** 1=Пн, 2=Вт, ..., 7=Вс */
+  day_of_week: number;
+  /** Postgres time: "HH:mm:ss" (в UI нормализуем до HH:mm) */
+  start_time: string;
+  end_time: string;
+  /** id профиля-участника занятия или null (вся семья) */
+  participant_id: string | null;
+  location: string | null;
+  color: ScheduleColor;
+  created_by: string | null;
+  created_at: string;
+}

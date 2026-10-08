@@ -12,6 +12,7 @@ import { LoginPage } from './pages/LoginPage';
 import { HomePage } from './pages/HomePage';
 import { CalendarPage } from './pages/CalendarPage';
 import { TasksPage } from './pages/TasksPage';
+import { SchedulePage } from './pages/SchedulePage';
 import { MarksPage } from './pages/MarksPage';
 import { VaultPage } from './pages/VaultPage';
 
@@ -72,6 +73,7 @@ export default function App() {
             <Route path="/" element={<HomePage />} />
             <Route path="/calendar" element={<CalendarPage />} />
             <Route path="/tasks" element={<TasksPage />} />
+            <Route path="/schedule" element={<SchedulePage />} />
             <Route path="/marks" element={<MarksPage />} />
             <Route path="/vault" element={<VaultPage />} />
           </Route>

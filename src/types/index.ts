@@ -12,6 +12,9 @@ export type TaskPriority = 'low' | 'medium' | 'high';
 /** Статус задачи */
 export type TaskStatus = 'todo' | 'doing' | 'done';
 
+/** Цвет занятия в недельном расписании (совпадает с CHECK в БД) */
+export type ScheduleColor = 'blue' | 'green' | 'red' | 'yellow' | 'purple' | 'pink';
+
 /** Категория документа в сейфе */
 export type DocumentCategory =
   | 'passport'

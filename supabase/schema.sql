@@ -272,7 +272,49 @@ begin
 exception when duplicate_object then null;
 end $$;
 
-do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'profiles'); exception when duplicate_object then null; end $$;
+
+-- ============ Таблица schedule: регулярные занятия недели ============
+
+create table if not exists public.schedule (
+  id uuid primary key default gen_random_uuid(),
+  family_id uuid not null references public.families(id) on delete cascade,
+  title text not null check (char_length(title) between 1 and 120),
+  day_of_week smallint not null check (day_of_week between 1 and 7), -- 1=Пн ... 7=Вс
+  start_time time not null,
+  end_time time not null,
+  participant_id uuid references public.profiles(id) on delete set null,
+  location text,
+  color text not null default 'blue' check (color in ('blue','green','red','yellow','purple','pink')),
+  created_by uuid references public.profiles(id) on delete set null,
+  created_at timestamptz not null default now(),
+  check (end_time > start_time)
+);
+
+create index if not exists schedule_family_day_idx
+  on public.schedule (family_id, day_of_week, start_time);
+
+-- RLS для schedule: доступ только участникам семьи
+alter table public.schedule enable row level security;
+
+drop policy if exists schedule_select on public.schedule;
+create policy schedule_select on public.schedule
+  for select using (public.is_family_member(family_id));
+
+drop policy if exists schedule_insert on public.schedule;
+create policy schedule_insert on public.schedule
+  for insert with check (public.is_family_member(family_id) and created_by = auth.uid());
+
+drop policy if exists schedule_update on public.schedule;
+create policy schedule_update on public.schedule
+  for update using (public.is_family_member(family_id));
+
+drop policy if exists schedule_delete on public.schedule;
+create policy schedule_delete on public.schedule
+  for delete using (public.is_family_member(family_id));
+
+do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'profiles');
+do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'schedule'); exception when duplicate_object then null; end $$;
+ exception when duplicate_object then null; end $$;
 do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'events'); exception when duplicate_object then null; end $$;
 do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'tasks'); exception when duplicate_object then null; end $$;
 do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'shopping_lists'); exception when duplicate_object then null; end $$;
