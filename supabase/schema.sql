@@ -86,14 +86,36 @@ create table if not exists public.marks (
 create table if not exists public.documents (
   id          uuid primary key default gen_random_uuid(),
   family_id   uuid not null references public.families (id) on delete cascade,
-  name        text not null,
-  file_url    text not null,                 -- путь в Storage bucket 'vault'
+  title       text not null,                 -- название документа (редактирует пользователь)
   category    text not null default 'other'
-              check (category in ('passport','insurance','medical','contract','other')),
-  expiry_date date,
+              check (category in ('passport','insurance','auto','medical','education','property','other')),
+  file_url    text not null,                 -- публичный URL файла в bucket 'documents'
+  file_path   text not null,                 -- путь объекта в bucket — нужен для удаления
+  file_name   text not null,                 -- исходное имя загруженного файла
+  file_size   bigint not null default 0,     -- размер в байтах
+  mime_type   text not null default 'application/octet-stream',
+  expiry_date date,                          -- срок действия (паспорт, полис, права...)
+  description text,
   uploaded_by uuid not null references auth.users (id) on delete cascade,
   created_at  timestamptz not null default now()
 );
+
+-- Миграция для старых БД: если таблица documents уже существовала со старой схемой
+-- (name/file_url/...), добавляем недостающие колонки.
+do $$
+begin
+  if exists (select 1 from information_schema.columns
+             where table_schema='public' and table_name='documents' and column_name='name') then
+    execute 'alter table public.documents add column if not exists title text';
+    execute 'update public.documents set title = name where title is null';
+    execute 'alter table public.documents alter column title set not null';
+  end if;
+end $$;
+alter table public.documents add column if not exists file_path   text;
+alter table public.documents add column if not exists file_name   text;
+alter table public.documents add column if not exists file_size   bigint not null default 0;
+alter table public.documents add column if not exists mime_type   text not null default 'application/octet-stream';
+alter table public.documents add column if not exists description text;
 
 -- Индексы по family_id — все запросы идут с фильтром семьи
 create index if not exists events_family_idx      on public.events      (family_id);
@@ -322,19 +344,26 @@ do $$ begin execute format('alter publication supabase_realtime add table public
 do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'marks'); exception when duplicate_object then null; end $$;
 do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'documents'); exception when duplicate_object then null; end $$;
 
--- ============ 6. Storage: приватный бакет «сейфа» ============
+-- ============ 6. Storage: бакет «сейфа» = documents (публичный для чтения) ============
+-- Публичность bucket не нарушает приватность: доступ к файлам имеют только участники
+-- семьи (RLS на таблице documents), а file_url известен лишь им. Публичный URL нужен,
+-- чтобы <img>/<iframe> открывали файлы без токена авторизации.
 
 insert into storage.buckets (id, name, public)
-values ('vault', 'vault', false)
-on conflict (id) do nothing;
+values ('documents', 'documents', true)
+on conflict (id) do update set public = excluded.public;
 
-drop policy if exists vault_access on storage.objects;
-create policy vault_access on storage.objects
+drop policy if exists documents_storage_access on storage.objects;
+create policy documents_storage_access on storage.objects
   for all
-  using (bucket_id = 'vault' and public.is_family_member(
+  using (bucket_id = 'documents' and public.is_family_member(
     (split_part(name, '/', 1))::uuid
   ))
-  with check (bucket_id = 'vault' and public.is_family_member(
+  with check (bucket_id = 'documents' and public.is_family_member(
     (split_part(name, '/', 1))::uuid
   ));
--- Файлы хранятся по пути {family_id}/{document_id}.{ext}
+
+-- Совместимость: старый приватный бакет 'vault' — политики удаляем (файлы мигрируют в documents)
+drop policy if exists vault_access on storage.objects;
+
+-- Файлы хранятся по пути {family_id}/{timestamp}-{random}.{ext}

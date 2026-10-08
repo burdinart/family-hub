@@ -83,11 +83,22 @@ export interface Mark {
 export interface Document {
   id: string;
   family_id: string;
-  name: string;
-  file_url: string;
+  /** название документа (редактируется пользователем) */
+  title: string;
   category: DocumentCategory;
+  /** публичный URL файла в Supabase Storage */
+  file_url: string;
+  /** путь объекта в bucket 'documents' — нужен для удаления файла */
+  file_path: string;
+  /** исходное имя загруженного файла */
+  file_name: string;
+  /** размер файла в байтах */
+  file_size: number;
+  /** MIME-тип (image/jpeg, image/png, application/pdf) */
+  mime_type: string;
   /** срок действия документа (ISO date) или null */
   expiry_date: string | null;
+  description: string | null;
   uploaded_by: string;
   created_at: string;
 }
