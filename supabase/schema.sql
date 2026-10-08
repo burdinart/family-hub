@@ -1,7 +1,7 @@
 -- Family Hub: схема Supabase (PostgreSQL). Выполнить целиком в Supabase Studio -> SQL Editor.
 -- Идемпотентна: можно запускать повторно.
 -- Таблицы соответствуют src/types/app.ts: families, profiles, events, tasks,
--- shopping_lists, shopping_items, marks, documents.
+-- shopping_lists, shopping_items, documents, schedule.
 
 -- ============ 0. Расширения (gen_random_uuid нужен для default id) ============
 -- Если этот блок падает с ошибкой permissions, выполните его отдельно role postgres:
@@ -68,18 +68,6 @@ create table if not exists public.shopping_items (
   quantity   text not null default '',
   checked    boolean not null default false,
   added_by   uuid not null references auth.users (id) on delete cascade,
-  created_at timestamptz not null default now()
-);
-
-create table if not exists public.marks (
-  id         uuid primary key default gen_random_uuid(),
-  family_id  uuid not null references public.families (id) on delete cascade,
-  name       text not null,
-  lat        double precision not null,
-  lng        double precision not null,
-  radius     integer not null default 200,   -- метры
-  category   text not null default 'other',
-  created_by uuid not null references auth.users (id) on delete cascade,
   created_at timestamptz not null default now()
 );
 
@@ -211,7 +199,6 @@ create index if not exists events_family_idx      on public.events      (family_
 create index if not exists tasks_family_idx       on public.tasks       (family_id);
 create index if not exists lists_family_idx       on public.shopping_lists (family_id);
 create index if not exists items_list_idx         on public.shopping_items (list_id);
-create index if not exists marks_family_idx       on public.marks       (family_id);
 create index if not exists documents_family_idx   on public.documents   (family_id);
 create index if not exists profiles_family_idx    on public.profiles    (family_id);
 
@@ -225,7 +212,6 @@ begin
   execute format('alter table public.%I enable row level security', 'tasks');
   execute format('alter table public.%I enable row level security', 'shopping_lists');
   execute format('alter table public.%I enable row level security', 'shopping_items');
-  execute format('alter table public.%I enable row level security', 'marks');
   execute format('alter table public.%I enable row level security', 'documents');
 end $$;
 
@@ -269,7 +255,7 @@ drop policy if exists profiles_update on public.profiles;
 create policy profiles_update on public.profiles
   for update using (id = auth.uid());
 
--- Данные семьи (events/tasks/lists/items/marks/documents):
+-- Данные семьи (events/tasks/lists/items/documents):
 -- выборка и изменение — участникам; удаление — автору записи
 drop policy if exists events_rw on public.events;
 create policy events_rw on public.events
@@ -301,12 +287,6 @@ create policy items_rw on public.shopping_items
     select 1 from public.shopping_lists l
     where l.id = list_id and public.is_family_member(l.family_id)
   ));
-
-drop policy if exists marks_rw on public.marks;
-create policy marks_rw on public.marks
-  for all
-  using (public.is_family_member(family_id))
-  with check (public.is_family_member(family_id) and created_by = auth.uid());
 
 drop policy if exists documents_rw on public.documents;
 create policy documents_rw on public.documents
@@ -430,7 +410,6 @@ do $$ begin execute format('alter publication supabase_realtime add table public
 do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'tasks'); exception when duplicate_object then null; end $$;
 do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'shopping_lists'); exception when duplicate_object then null; end $$;
 do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'shopping_items'); exception when duplicate_object then null; end $$;
-do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'marks'); exception when duplicate_object then null; end $$;
 do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'documents'); exception when duplicate_object then null; end $$;
 
 -- ============ 6. Storage: бакет «сейфа» = documents (публичный для чтения) ============

@@ -65,20 +65,6 @@ export interface Task {
   created_at: string;
 }
 
-/** Geo-метка (таблица marks) */
-export interface Mark {
-  id: string;
-  family_id: string;
-  name: string;
-  lat: number;
-  lng: number;
-  /** радиус геозоны в метрах */
-  radius: number;
-  category: string;
-  created_by: string;
-  created_at: string;
-}
-
 /** Документ в сейфе (таблица documents) */
 export interface Document {
   id: string;

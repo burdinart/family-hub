@@ -1,2 +1,2 @@
 # family-hub
-Семейное PWA-приложение для управления расписанием, задачами, документами и метками. Стек: React, Vite, TypeScript, Tailwind, Zustand, Supabase.
+Семейное PWA-приложение для управления расписанием, задачами и документами. Стек: React, Vite, TypeScript, Tailwind, Zustand, Supabase.
