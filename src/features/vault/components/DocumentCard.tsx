@@ -47,7 +47,9 @@ function expiryStatus(expiryDate: string | null): {
 export function DocumentCard({ document, onView, onEdit, onDelete }: DocumentCardProps) {
   const category = CATEGORY_MAP[document.category];
   const CategoryIcon = category.icon;
-  const isImage = document.mime_type.startsWith('image/');
+  // mime_type может быть null у старых записей — фолбэк по расширению из URL
+  const isImage =
+    document.mime_type?.startsWith('image/') ?? /\.(jpe?g|png|gif|webp)$/i.test(document.file_url);
   const expiry = expiryStatus(document.expiry_date);
 
   return (

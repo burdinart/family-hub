@@ -90,16 +90,16 @@ export interface Document {
   file_url: string;
   /** путь объекта в bucket 'documents' — нужен для удаления файла */
   file_path: string;
-  /** исходное имя загруженного файла */
-  file_name: string;
-  /** размер файла в байтах */
-  file_size: number;
-  /** MIME-тип (image/jpeg, image/png, application/pdf) */
-  mime_type: string;
+  /** исходное имя загруженного файла (null — для старых записей без колонки) */
+  file_name: string | null;
+  /** размер файла в байтах (null — если не сохранён) */
+  file_size: number | null;
+  /** MIME-тип (image/jpeg, image/png, application/pdf) или null */
+  mime_type: string | null;
   /** срок действия документа (ISO date) или null */
   expiry_date: string | null;
   description: string | null;
-  uploaded_by: string;
+  uploaded_by: string | null;
   created_at: string;
 }
 

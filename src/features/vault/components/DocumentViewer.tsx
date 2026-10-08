@@ -12,7 +12,9 @@ interface DocumentViewerProps {
 }
 
 export function DocumentViewer({ document, onClose }: DocumentViewerProps) {
-  const isImage = document.mime_type.startsWith('image/');
+  // mime_type может быть null у старых записей — фолбэк по расширению из URL
+  const isImage =
+    document.mime_type?.startsWith('image/') ?? /\.(jpe?g|png|gif|webp)$/i.test(document.file_url);
   const category = CATEGORY_MAP[document.category];
 
   return (

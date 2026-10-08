@@ -65,12 +65,13 @@ function toDocument(row: Record<string, unknown>): Document {
     file_url: fileUrl,
     // Путь объекта в bucket: колонка file_path; для старых записей — фолбэк из URL
     file_path: String(row.file_path ?? '') || getFilePathFromUrl(fileUrl),
-    file_name: String(row.file_name ?? ''),
-    file_size: Number(row.file_size ?? 0),
-    mime_type: String(row.mime_type ?? 'application/octet-stream'),
+    // nullable-поля: null сохраняем null-ом (старые записи могли не иметь колонок)
+    file_name: row.file_name == null ? null : String(row.file_name),
+    file_size: row.file_size == null ? null : Number(row.file_size),
+    mime_type: row.mime_type == null ? null : String(row.mime_type),
     expiry_date: expiry,
     description: (row.description as string | null) ?? null,
-    uploaded_by: String(row.uploaded_by ?? ''),
+    uploaded_by: row.uploaded_by == null ? null : String(row.uploaded_by),
     created_at: String(row.created_at ?? new Date().toISOString()),
   };
 }
@@ -218,8 +219,9 @@ export const documentsService = {
   /** Путь к файлу из URL (публичный API сервиса, используется в тестах/миграциях) */
   getFilePathFromUrl,
 
-  /** Человекочитаемый размер файла */
-  formatFileSize(bytes: number): string {
+  /** Человекочитаемый размер файла (null — если размер не сохранён в старых записях) */
+  formatFileSize(bytes: number | null): string {
+    if (bytes == null) return '';
     if (bytes < 1024) return `${bytes} Б`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} КБ`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
