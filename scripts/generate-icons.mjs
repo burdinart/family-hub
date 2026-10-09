@@ -1,8 +1,13 @@
 // scripts/generate-icons.mjs — генерация PWA-иконок (192x192 и 512x512) в public/icons/.
-// Запуск: npm run generate-icons (нужен devDependency canvas).
+// Запуск: npm run generate-icons (нужен devDependency @napi-rs/canvas).
 // Иконки нужны для manifest.json: без них установка PWA на рабочий стол недоступна.
+//
+// ВАЖНО: используется @napi-rs/canvas, а не нативный `canvas`: последний требует
+// компиляции через node-gyp (cairo/pango/nodejs headers) и падает при установке
+// в лёгких CI-образах (GitHub Actions, Node 22). @napi-rs/canvas поставляется с
+// готовыми бинарниками под все платформы и ставится без сборки.
 
-import { createCanvas } from 'canvas';
+import { createCanvas } from '@napi-rs/canvas';
 import { writeFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
