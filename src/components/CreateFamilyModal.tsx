@@ -7,8 +7,9 @@
 
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { CheckCircle, KeyRound, Loader2, Plus, Users, X } from 'lucide-react';
+import { Bell, CheckCircle, KeyRound, Loader2, Plus, Users, X } from 'lucide-react';
 import { familyService, normalizeInviteCode } from '@/services/familyService';
+import { pushService } from '@/services/pushService';
 import { useAuth } from '@/hooks/useAuth';
 
 interface CreateFamilyModalProps {
@@ -37,6 +38,11 @@ export function CreateFamilyModal({ onClose, onFamilyCreated }: CreateFamilyModa
   const [errorText, setErrorText] = useState('');
   // Подтверждение копирования вместо нативного alert() — мобильный UX
   const [copied, setCopied] = useState(false);
+  // Состояние подписки на push в режиме успеха онбординга:
+  // null — ещё не трогали, 'loading' — идёт подписка, true/false — результат
+  const [pushEnabled, setPushEnabled] = useState<boolean | null>(null);
+  const [pushLoading, setPushLoading] = useState(false);
+  const [pushError, setPushError] = useState('');
 
   // При смене режима чистим ошибку предыдущей попытки
   useEffect(() => {
@@ -92,6 +98,23 @@ export function CreateFamilyModal({ onClose, onFamilyCreated }: CreateFamilyModa
     } catch {
       // Буфер недоступен (http / old browser) — выделяем код, пользователь скопирует вручную
       setErrorText('Не удалось скопировать — выделите код и скопируйте вручную.');
+    }
+  };
+
+  /** Подписка на push из онбординга: показываем результат до перехода в приложение */
+  const handleEnablePush = async () => {
+    setPushLoading(true);
+    setPushError('');
+    try {
+      const result = await pushService.subscribe();
+      if (result.success) {
+        setPushEnabled(true);
+      } else {
+        setPushEnabled(false);
+        setPushError(result.error ?? 'Не удалось включить уведомления');
+      }
+    } finally {
+      setPushLoading(false);
     }
   };
 
@@ -281,6 +304,40 @@ export function CreateFamilyModal({ onClose, onFamilyCreated }: CreateFamilyModa
                 {copied ? '✓ Код скопирован' : 'Скопировать код'}
               </button>
             </div>
+            {/* Push-подписка: лучший момент запросить разрешение — сразу после создания семьи */}
+            {pushEnabled === null && (
+              <button
+                type="button"
+                onClick={() => void handleEnablePush()}
+                disabled={pushLoading}
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-green-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-green-700 disabled:opacity-50"
+              >
+                {pushLoading ? (
+                  <Loader2 size={18} className="animate-spin" aria-hidden="true" />
+                ) : (
+                  <Bell size={18} aria-hidden="true" />
+                )}
+                {pushLoading ? 'Подключение…' : 'Включить уведомления'}
+              </button>
+            )}
+            {pushEnabled === true && (
+              <p className="flex items-center justify-center gap-1.5 text-sm font-medium text-green-700">
+                <CheckCircle size={16} aria-hidden="true" />
+                Уведомления включены!
+              </p>
+            )}
+            {pushEnabled === false && (
+              <div className="space-y-2">
+                <p className="text-xs text-red-600">{pushError}</p>
+                <button
+                  type="button"
+                  onClick={() => setPushEnabled(null)}
+                  className="w-full rounded-xl border border-gray-300 px-4 py-2 text-sm text-gray-600 transition hover:bg-gray-50"
+                >
+                  Попробовать ещё раз
+                </button>
+              </div>
+            )}
             <button type="button" onClick={onFamilyCreated} className={btnPrimary}>
               Перейти в приложение
             </button>
