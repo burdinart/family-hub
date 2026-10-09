@@ -19,6 +19,12 @@ export interface Profile {
 export interface Family {
   id: string;
   name: string;
+  /**
+   * Код приглашения (6 символов A–Z0–9, unique). Генерируется на клиенте при
+   * создании семьи; остальные члены входят по нему (joinFamilyByCode).
+   * Опционален — у семей, созданных до введения колонки, кода может не быть.
+   */
+  invite_code?: string | null;
   created_at: string;
 }
 

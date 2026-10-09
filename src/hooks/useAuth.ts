@@ -15,11 +15,12 @@ interface UseAuthResult {
   isLoading: boolean;
   error: string | null;
   /**
-   * Онбординг: профиль загружен, но семья ещё не создана (family_id = null).
-   * UI показывает модалку «Создайте вашу семью» (CreateFamilyModal).
+   * Онбординг: профиль загружен, но семья ещё не подключена (family_id = null).
+   * UI показывает модалку выбора: «Создать семью» или «Присоединиться по коду»
+   * (CreateFamilyModal).
    */
   needsFamily: boolean;
-  /** Перечитать текущий профиль из БД (после создания семьи / приглашения) */
+  /** Перечитать текущий профиль из БД (после создания семьи / присоединения по коду) */
   refreshProfile: () => Promise<void>;
   /** OAuth-вход через Google (если провайдер включён в Supabase), иначе — email-ссылка */
   signIn: () => Promise<{ ok: boolean; error?: string }>;
