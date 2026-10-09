@@ -25,6 +25,8 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+          # Публичный VAPID-ключ для Web Push (только public! приватный — в секретах Edge Function)
+          VITE_VAPID_PUBLIC_KEY: ${{ vars.VITE_VAPID_PUBLIC_KEY }}
       - name: Публикация dist в gh-pages
         uses: JamesIves/github-pages-deploy-action@v4
         with:
