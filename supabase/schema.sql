@@ -11,9 +11,12 @@ create extension if not exists pgcrypto;
 -- ============ 1. ТАБЛИЦЫ ============
 
 create table if not exists public.families (
-  id         uuid primary key default gen_random_uuid(),
-  name       text not null,
-  created_at timestamptz not null default now()
+  id          uuid primary key default gen_random_uuid(),
+  name        text not null,
+  -- Код приглашения: 6 символов A–Z0–9, уникален. Генерируется клиентом при
+  -- создании семьи; по нему остальные члены присоединяются (familyService.joinFamilyByCode).
+  invite_code text unique check (invite_code ~ '^[A-Z0-9]{6}$'),
+  created_at  timestamptz not null default now()
 );
 
 create table if not exists public.profiles (
@@ -541,3 +544,45 @@ begin
     alter publication supabase_realtime add table public.messages;
   end if;
 end $$;
+
+-- ============ 7. МИГРАЦИЯ: коды приглашений (invite_code) ============
+-- Идемпотентный блок для БАЗ, созданных до введения колонки invite_code.
+-- Можно выполнять повторно без ошибок.
+
+-- 7.1 Колонка invite_code (у новых установок уже есть из раздела «1. ТАБЛИЦЫ»)
+alter table public.families
+  add column if not exists invite_code text;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'families_invite_code_format'
+      and conrelid = 'public.families'::regclass
+  ) then
+    alter table public.families
+      add constraint families_invite_code_format check (invite_code ~ '^[A-Z0-9]{6}$');
+  end if;
+end $$;
+
+create unique index if not exists families_invite_code_key
+  on public.families (invite_code);
+
+-- 7.2 Поиск семьи по коду приглашения.
+-- Нужна именно security definer: политика families_select пускает только
+-- участников семьи, а присоединяющийся пользователь ещё НЕ участник —
+-- обычный SELECT не нашёл бы семью. Функция возвращает минимум данных (id, name).
+create or replace function public.find_family_by_invite_code(code text)
+returns table (id uuid, name text)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select f.id, f.name
+  from public.families f
+  where f.invite_code = upper(trim(code));
+$$;
+
+revoke all on function public.find_family_by_invite_code(text) from public;
+grant execute on function public.find_family_by_invite_code(text) to authenticated;
