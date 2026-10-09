@@ -8,9 +8,20 @@ import { useAuthStore } from '../store/authStore';
 import type { Profile } from '../types';
 
 interface UseAuthResult {
+  /** Профиль пользователя из таблицы profiles (null — профиль не загружен/не найден) */
   user: Profile | null;
+  /** Алиас для user — то же самое, удобнее читать в компонентах онбординга */
+  profile: Profile | null;
   isLoading: boolean;
   error: string | null;
+  /**
+   * Онбординг: профиль загружен, но семья ещё не подключена (family_id = null).
+   * UI показывает модалку выбора: «Создать семью» или «Присоединиться по коду»
+   * (CreateFamilyModal).
+   */
+  needsFamily: boolean;
+  /** Перечитать текущий профиль из БД (после создания семьи / присоединения по коду) */
+  refreshProfile: () => Promise<void>;
   /** OAuth-вход через Google (если провайдер включён в Supabase), иначе — email-ссылка */
   signIn: () => Promise<{ ok: boolean; error?: string }>;
   /** Вход по email: magic link (без пароля) */
@@ -23,6 +34,12 @@ export function useAuth(): UseAuthResult {
   const isLoading = useAuthStore((s) => s.isLoading);
   const error = useAuthStore((s) => s.error);
   const setError = useAuthStore((s) => s.setError);
+  const refreshProfile = useAuthStore((s) => s.refreshProfile);
+
+  // Онбординг: нужен только когда профиль точно загружен и семьи нет.
+  // Пока user === null (загрузка / профиль не найден) — false, чтобы
+  // не мигать модалкой до готовности данных.
+  const needsFamily = user ? !user.family_id : false;
 
   const signInWithEmail = useCallback(
     async (email: string): Promise<{ ok: boolean; error?: string }> => {
@@ -91,5 +108,5 @@ export function useAuth(): UseAuthResult {
     }
   }, [setError]);
 
-  return { user, isLoading, error, signIn, signInWithEmail, signOut };
+  return { user, profile: user, isLoading, error, needsFamily, refreshProfile, signIn, signInWithEmail, signOut };
 }

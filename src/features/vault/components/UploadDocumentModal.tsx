@@ -3,7 +3,7 @@
 // Mobile-first: bottom-sheet на телефонах, карточка по центру на десктопе.
 // Загрузка идёт через store.uploadDocument (Storage + запись в БД с откатом при ошибке).
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { UploadCloud, X, Loader2, FileText, Image as ImageIcon } from 'lucide-react';
 import type { DocumentCategory } from '@/types';
 import { useAuthStore } from '@/store/authStore';
@@ -19,6 +19,12 @@ interface UploadDocumentModalProps {
 export function UploadDocumentModal({ familyId, onClose }: UploadDocumentModalProps) {
   const userId = useAuthStore((s) => s.user?.id ?? null);
   const uploadDocument = useDocumentsStore((s) => s.uploadDocument);
+  // id текущего пользователя в store — защита от начисления баллов чужими событиями
+  const setCurrentUserId = useDocumentsStore((s) => s.setCurrentUserId);
+
+  useEffect(() => {
+    setCurrentUserId(userId);
+  }, [userId, setCurrentUserId]);
   const isUploading = useDocumentsStore((s) => s.isUploading);
 
   const fileInputRef = useRef<HTMLInputElement>(null);

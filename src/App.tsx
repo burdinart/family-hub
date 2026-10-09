@@ -15,6 +15,7 @@ import { TasksPage } from './pages/TasksPage';
 import { SchedulePage } from './pages/SchedulePage';
 import { VaultPage } from './pages/VaultPage';
 import { ChatPage } from './pages/ChatPage';
+import { SettingsPage } from './pages/SettingsPage';
 
 export default function App() {
   const [initError, setInitError] = useState<string | null>(null);
@@ -76,6 +77,7 @@ export default function App() {
             <Route path="/schedule" element={<SchedulePage />} />
             <Route path="/chat" element={<ChatPage />} />
             <Route path="/vault" element={<VaultPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
           </Route>
         </Route>
 

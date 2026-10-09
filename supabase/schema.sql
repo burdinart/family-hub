@@ -11,9 +11,12 @@ create extension if not exists pgcrypto;
 -- ============ 1. ТАБЛИЦЫ ============
 
 create table if not exists public.families (
-  id         uuid primary key default gen_random_uuid(),
-  name       text not null,
-  created_at timestamptz not null default now()
+  id          uuid primary key default gen_random_uuid(),
+  name        text not null,
+  -- Код приглашения: 6 символов A–Z0–9, уникален. Генерируется клиентом при
+  -- создании семьи; по нему остальные члены присоединяются (familyService.joinFamilyByCode).
+  invite_code text unique check (invite_code ~ '^[A-Z0-9]{6}$'),
+  created_at  timestamptz not null default now()
 );
 
 create table if not exists public.profiles (
@@ -355,6 +358,31 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
 
+-- ============ 4.1 Функция is_family_admin (роль администратора семьи) ============
+-- Определяется ДО таблицы messages: политика family_members_delete_messages ссылается
+-- на неё при создании — без этой функции выполнение схемы упало бы с «function does not exist».
+-- Текущая модель: администратором считается самый ранний по created_at участник семьи
+-- (её создатель). При появлении явной ролевой модели (например, profiles.role)
+-- достаточно переписать тело функции.
+create or replace function public.is_family_admin(fam uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.profiles p
+    where p.id = auth.uid() and p.family_id = fam
+      -- никто в семье не присоединился раньше текущего пользователя
+      and not exists (
+        select 1 from public.profiles other
+        where other.family_id = fam
+          and (other.created_at, other.id) < (p.created_at, p.id)
+      )
+  );
+$$;
+
 -- ============ 5. Realtime: все таблицы семьи в publication ============
 
 do $$
@@ -403,9 +431,8 @@ drop policy if exists schedule_delete on public.schedule;
 create policy schedule_delete on public.schedule
   for delete using (public.is_family_member(family_id));
 
-do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'profiles');
+do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'profiles'); exception when duplicate_object then null; end $$;
 do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'schedule'); exception when duplicate_object then null; end $$;
- exception when duplicate_object then null; end $$;
 do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'events'); exception when duplicate_object then null; end $$;
 do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'tasks'); exception when duplicate_object then null; end $$;
 do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'shopping_lists'); exception when duplicate_object then null; end $$;
@@ -497,6 +524,8 @@ create policy "family_members_insert_messages" on public.messages
   );
 
 -- Удалять — только свои сообщения (админ семьи — любые, на случай модерации)
+-- Примечание: функция is_family_admin определена ниже (раздел «5.1»). Пока ролевой
+-- модели нет, она всегда возвращает false — право удаления остаётся у автора.
 drop policy if exists "family_members_delete_messages" on public.messages;
 create policy "family_members_delete_messages" on public.messages
   for delete to authenticated using (
@@ -515,3 +544,45 @@ begin
     alter publication supabase_realtime add table public.messages;
   end if;
 end $$;
+
+-- ============ 7. МИГРАЦИЯ: коды приглашений (invite_code) ============
+-- Идемпотентный блок для БАЗ, созданных до введения колонки invite_code.
+-- Можно выполнять повторно без ошибок.
+
+-- 7.1 Колонка invite_code (у новых установок уже есть из раздела «1. ТАБЛИЦЫ»)
+alter table public.families
+  add column if not exists invite_code text;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'families_invite_code_format'
+      and conrelid = 'public.families'::regclass
+  ) then
+    alter table public.families
+      add constraint families_invite_code_format check (invite_code ~ '^[A-Z0-9]{6}$');
+  end if;
+end $$;
+
+create unique index if not exists families_invite_code_key
+  on public.families (invite_code);
+
+-- 7.2 Поиск семьи по коду приглашения.
+-- Нужна именно security definer: политика families_select пускает только
+-- участников семьи, а присоединяющийся пользователь ещё НЕ участник —
+-- обычный SELECT не нашёл бы семью. Функция возвращает минимум данных (id, name).
+create or replace function public.find_family_by_invite_code(code text)
+returns table (id uuid, name text)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select f.id, f.name
+  from public.families f
+  where f.invite_code = upper(trim(code));
+$$;
+
+revoke all on function public.find_family_by_invite_code(text) from public;
+grant execute on function public.find_family_by_invite_code(text) to authenticated;

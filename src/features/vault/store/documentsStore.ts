@@ -4,6 +4,7 @@
 
 import { create } from 'zustand';
 import type { Document, DocumentCategory } from '@/types';
+import { ratingsService } from '@/features/ratings/services/ratingsService';
 import { describeError, documentsService, type NewDocumentInput } from '../services/documentsService';
 
 interface DocumentsState {
@@ -21,6 +22,10 @@ interface DocumentsState {
 
   /** Загрузка файла + создание записи; возвращает созданный документ или null при ошибке */
   uploadDocument: (input: NewDocumentInput) => Promise<Document | null>;
+  /** id текущего пользователя — баллы за загрузку начисляются только ему */
+  currentUserId: string | null;
+  /** Обновить id текущего пользователя (вызывается страницей при монтировании) */
+  setCurrentUserId: (userId: string | null) => void;
   /** Обновление метаданных (title/category/expiry/description) */
   editDocument: (
     id: string,
@@ -39,16 +44,37 @@ export const useDocumentsStore = create<DocumentsState>((set, get) => ({
   isUploading: false,
   error: null,
   unsubscribe: null,
+  currentUserId: null,
 
   setDocuments: (documents) => set({ documents }),
   setLoading: (isLoading) => set({ isLoading }),
   setUploading: (isUploading) => set({ isUploading }),
   setError: (error) => set({ error }),
+  setCurrentUserId: (currentUserId) => set({ currentUserId }),
 
   uploadDocument: async (input) => {
     set({ isUploading: true, error: null });
     try {
       const doc = await documentsService.uploadDocument(input);
+      // Геймификация: +2 балла за загруженный в сейф документ.
+      // Начисляем ТОЛЬКО если документ загрузил текущий пользователь — иначе при
+      // realtime-ререндерах чужими событиями баллы «капали» бы не тому человеку.
+      // Ошибка начисления не должна ломать успешную загрузку — логируем и живём дальше.
+      const meId = get().currentUserId;
+      if (meId && input.uploadedBy === meId) {
+        try {
+          await ratingsService.addPoints(
+            input.familyId,
+            meId,
+            2,
+            `Загружен документ в сейф: ${doc.title}`,
+            'document',
+            doc.id,
+          );
+        } catch (pointsErr) {
+          console.error('Не удалось начислить баллы за документ:', pointsErr);
+        }
+      }
       // Оптимистично добавляем в начало списка (realtime затем синхронизирует)
       set((state) => ({ documents: [doc, ...state.documents], isUploading: false }));
       return doc;

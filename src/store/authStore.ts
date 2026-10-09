@@ -29,6 +29,12 @@ interface AuthState {
 
   /** Загрузить профиль по id (используется при auth-событиях) */
   fetchProfile: (userId: string) => Promise<void>;
+
+  /**
+   * Перечитать текущий профиль из БД. Нужен после онбординга (создания семьи),
+   * чтобы обновить family_id без полного reload страницы.
+   */
+  refreshProfile: () => Promise<void>;
 }
 
 /** Приведение строки БД к доменному Profile (points может отсутствовать → 0) */
@@ -104,6 +110,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     } catch (err) {
       set({ error: err instanceof Error ? err.message : String(err) });
     }
+  },
+
+  refreshProfile: async () => {
+    // id берём из актуальной сессии Supabase (профиль == auth.users.id)
+    const userId = get().user?.id ?? get().session?.user?.id;
+    if (!userId) return;
+    await get().fetchProfile(userId);
   },
 
   initialize: async () => {

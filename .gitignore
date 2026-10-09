@@ -1,8 +1,7 @@
-/node_modules
-/dist
-.env.local
-*.local
-.DS_Store
+node_modules/
+dist/
+
+# Локальные переменные окружения — НЕ коммитить (содержат секреты VAPID и Supabase)
 .env
-.env.*
-!.env.example
+.env.local
+.env.*.local
