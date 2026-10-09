@@ -6,3 +6,6 @@ supabase/.temp/
 .env
 .env.local
 .env.*.local
+
+# Кэш Supabase CLI (версии, project-ref, pooler-url)
+supabase/.temp/
