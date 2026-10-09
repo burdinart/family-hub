@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Family Hub — редирект</title>
+    <!-- SPA fallback для GitHub Pages: пересохраняем путь и редиректим на index.html.
+         ВАЖНО: используем относительный путь ./index.html, чтобы не зависеть от имени подпапки. -->
+    <script>
+      var path = location.pathname + location.search + location.hash;
+      try { sessionStorage.setItem('gha-react-router-path', path); } catch (e) {}
+      // './index.html' всегда резолвится в корень этого сайта (включая /family-hub/)
+      location.replace('./index.html#redirect=' + encodeURIComponent(path));
+    </script>
+  </head>
+  <body>Загрузка…</body>
+</html>

@@ -355,6 +355,31 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
 
+-- ============ 4.1 Функция is_family_admin (роль администратора семьи) ============
+-- Определяется ДО таблицы messages: политика family_members_delete_messages ссылается
+-- на неё при создании — без этой функции выполнение схемы упало бы с «function does not exist».
+-- Текущая модель: администратором считается самый ранний по created_at участник семьи
+-- (её создатель). При появлении явной ролевой модели (например, profiles.role)
+-- достаточно переписать тело функции.
+create or replace function public.is_family_admin(fam uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.profiles p
+    where p.id = auth.uid() and p.family_id = fam
+      -- никто в семье не присоединился раньше текущего пользователя
+      and not exists (
+        select 1 from public.profiles other
+        where other.family_id = fam
+          and (other.created_at, other.id) < (p.created_at, p.id)
+      )
+  );
+$$;
+
 -- ============ 5. Realtime: все таблицы семьи в publication ============
 
 do $$
@@ -403,9 +428,8 @@ drop policy if exists schedule_delete on public.schedule;
 create policy schedule_delete on public.schedule
   for delete using (public.is_family_member(family_id));
 
-do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'profiles');
+do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'profiles'); exception when duplicate_object then null; end $$;
 do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'schedule'); exception when duplicate_object then null; end $$;
- exception when duplicate_object then null; end $$;
 do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'events'); exception when duplicate_object then null; end $$;
 do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'tasks'); exception when duplicate_object then null; end $$;
 do $$ begin execute format('alter publication supabase_realtime add table public.%I', 'shopping_lists'); exception when duplicate_object then null; end $$;
@@ -497,6 +521,8 @@ create policy "family_members_insert_messages" on public.messages
   );
 
 -- Удалять — только свои сообщения (админ семьи — любые, на случай модерации)
+-- Примечание: функция is_family_admin определена ниже (раздел «5.1»). Пока ролевой
+-- модели нет, она всегда возвращает false — право удаления остаётся у автора.
 drop policy if exists "family_members_delete_messages" on public.messages;
 create policy "family_members_delete_messages" on public.messages
   for delete to authenticated using (
