@@ -5,7 +5,30 @@
 
 import { create } from 'zustand';
 import { tasksService, type NewTask } from '../services/tasksService';
+import { getTaskPoints, ratingsService } from '@/features/ratings/services/ratingsService';
+import { useAuthStore } from '@/store/authStore';
 import type { Task, TaskStatus } from '@/types';
+
+/**
+ * Начислить баллы за действие, если пользователь состоит в семье.
+ * Ошибку не пробрасываем в UI основного действия (задача уже сохранена) —
+ * только логируем: рейтинг со временем синхронизируется realtime-подпиской.
+ */
+async function awardPoints(
+  userId: string,
+  points: number,
+  reason: string,
+  category: 'task' | 'task_create' | 'shopping' | 'document',
+  referenceId: string | null,
+): Promise<void> {
+  const familyId = useAuthStore.getState().user?.family_id;
+  if (!familyId || points === 0) return;
+  try {
+    await ratingsService.addPoints(familyId, userId, points, reason, category, referenceId);
+  } catch (err) {
+    console.error('Не удалось начислить баллы:', err);
+  }
+}
 
 interface TasksState {
   tasks: Task[];
@@ -44,7 +67,12 @@ export const useTasksStore = create<TasksState>((set, get) => ({
 
   addTask: async (task) => {
     try {
-      await tasksService.createTask(task);
+      const created = await tasksService.createTask(task);
+      // Геймификация: +1 за создание (делегирование) задачи автором
+      const me = useAuthStore.getState().user;
+      if (me && created.created_by === me.id) {
+        await awardPoints(me.id, 1, `Создана задача: ${created.title}`, 'task_create', created.id);
+      }
       // Список придёт через realtime-событие insert
     } catch (err) {
       console.error('Ошибка создания задачи:', err);
@@ -55,9 +83,26 @@ export const useTasksStore = create<TasksState>((set, get) => ({
   updateTaskStatus: async (taskId, status) => {
     // Оптимистично меняем статус в локальном состоянии
     const prev = get().tasks;
+    const task = prev.find((t) => t.id === taskId);
+    const oldStatus = task?.status;
     set({ tasks: prev.map((t) => (t.id === taskId ? { ...t, status } : t)) });
     try {
       await tasksService.updateTaskStatus(taskId, status);
+
+      // Геймификация: начисляем баллы только при первом переводе в 'done'
+      // (повторные клики/откаты не должны фармить очки).
+      if (task && status === 'done' && oldStatus !== 'done') {
+        // «В срок» — если срок сегодня или позже либо у задачи нет даты
+        const isOnTime = task.due_date ? new Date(`${task.due_date}T23:59:59`) >= new Date() : true;
+        const points = getTaskPoints(task.priority, isOnTime);
+        const reason = `Выполнена задача: ${task.title}${isOnTime ? ' (в срок)' : ''}`;
+        // Баллы получает исполнитель (assignee), а если назначенного нет — тот, кто закрыл
+        const me = useAuthStore.getState().user;
+        const winnerId = task.assignee_id ?? me?.id ?? null;
+        if (winnerId) {
+          await awardPoints(winnerId, points, reason, 'task', task.id);
+        }
+      }
     } catch (err) {
       console.error('Ошибка обновления статуса:', err);
       set({ tasks: prev, error: 'Не удалось изменить статус задачи.' }); // откат

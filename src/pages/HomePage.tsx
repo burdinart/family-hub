@@ -12,6 +12,9 @@ import { useAuth } from '../hooks/useAuth';
 import { useAuthStore } from '../store/authStore';
 import { familyService } from '../services/familyService';
 import { CreateFamilyModal } from '../components/CreateFamilyModal';
+import { RatingWidget } from '../features/ratings/components/RatingWidget';
+import { PointsHistoryModal } from '../features/ratings/components/PointsHistoryModal';
+import { GiftPointsModal } from '../features/ratings/components/GiftPointsModal';
 
 interface Summary {
   activeTasks: number;
@@ -29,6 +32,9 @@ export function HomePage() {
   // - автоматически при первом входе (профиль загружен и family_id === null);
   // - по кнопке «Начать», если пользователь закрыл её ранее.
   const [showOnboarding, setShowOnboarding] = useState(false);
+  // Модалки геймификации: история начислений и подарок баллов (из RatingWidget)
+  const [showHistory, setShowHistory] = useState(false);
+  const [showGift, setShowGift] = useState(false);
 
   // Автопоказ модалки при онбординге
   useEffect(() => {
@@ -168,6 +174,21 @@ export function HomePage() {
           Выйти
         </button>
       </section>
+
+      {/* Виджет рейтинга: мои баллы/звание, топ семьи, кнопки «История» и «Подарить».
+          Рендерится только у участников семьи (есть family_id). */}
+      {user?.family_id && (
+        <RatingWidget
+          onOpenHistory={() => setShowHistory(true)}
+          onOpenGift={() => setShowGift(true)}
+        />
+      )}
+
+      {/* Модалки геймификации (открываются кнопками виджета) */}
+      {showHistory && <PointsHistoryModal onClose={() => setShowHistory(false)} />}
+      {showGift && (
+        <GiftPointsModal onClose={() => setShowGift(false)} onGifted={() => setShowGift(false)} />
+      )}
 
       {/* Карточка приглашения: код семьи для добавления новых членов.
           Mobile-first: блоки в столбик, кнопка во всю ширину касания. */}
