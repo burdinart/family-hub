@@ -1,7 +1,8 @@
 node_modules/
 dist/
+supabase/.temp/
 
-# Локальные переменные окружения — НЕ коммитить (содержат секреты VAPID и Supabase)
+# Локальные переменные окружения — НЕ коммитить (секреты VAPID и Supabase)
 .env
 .env.local
 .env.*.local
