@@ -1,10 +1,15 @@
 // src/features/tasks/components/TaskCard.tsx — карточка одной задачи.
 // Все мутации идут через store (оптимистичное обновление + realtime-синхронизация).
 // Mobile-first: крупные тач-зоны (min 44px), подтверждение удаления — confirm().
+// Исполнитель: аватар+имя из embed task.assignee; если embed нет (старая схема) —
+// fallback по имени из кэша членов семьи (familyMembersStore). Смена исполнителя —
+// прямо в карточке через нативный select (мобильный пикер).
 
-import { CalendarDays, CheckCircle2, Circle, Trash2 } from 'lucide-react';
+import { useEffect } from 'react';
+import { CalendarDays, CheckCircle2, Circle, Trash2, UserRound } from 'lucide-react';
 import type { Task, TaskPriority } from '@/types';
 import { useTasksStore } from '../store/tasksStore';
+import { useFamilyMembersStore } from '@/store/familyMembersStore';
 
 interface TaskCardProps {
   task: Task;
@@ -23,15 +28,61 @@ const PRIORITY_LABEL: Record<TaskPriority, string> = {
   high: 'Высокий',
 };
 
+/** Круглый аватар исполнителя (или первая буква имени / иконка пользователя) */
+function AssigneeAvatar({ name, avatarUrl }: { name: string; avatarUrl: string | null }) {
+  if (avatarUrl) {
+    return (
+      <img
+        src={avatarUrl}
+        alt={name}
+        loading="lazy"
+        className="h-5 w-5 flex-shrink-0 rounded-full object-cover"
+      />
+    );
+  }
+  if (name) {
+    return (
+      <span
+        aria-hidden="true"
+        className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-gray-300 text-[10px] font-bold text-gray-600"
+      >
+        {name.charAt(0).toUpperCase()}
+      </span>
+    );
+  }
+  return <UserRound size={16} className="flex-shrink-0 text-gray-400" aria-hidden="true" />;
+}
+
 export function TaskCard({ task }: TaskCardProps) {
   const updateTaskStatus = useTasksStore((s) => s.updateTaskStatus);
+  const updateTaskAssignee = useTasksStore((s) => s.updateTaskAssignee);
   const deleteTask = useTasksStore((s) => s.deleteTask);
+  // Кэш членов семьи — источник имён для fallback (если embed assignee недоступен)
+  const members = useFamilyMembersStore((s) => s.members);
+  const loadMembers = useFamilyMembersStore((s) => s.load);
 
   const isDone = task.status === 'done';
+
+  // Убеждаемся, что список членов семьи загружен (store сам сбросит флаг при смене семьи)
+  useEffect(() => {
+    void loadMembers();
+  }, [loadMembers]);
+
+  // Имя исполнителя: сначала embed из БД, иначе — из кэша членов семьи по id
+  const assigneeName = task.assignee?.full_name || '';
+  const fallbackName = task.assignee_id
+    ? members.find((m) => m.id === task.assignee_id)?.full_name ?? ''
+    : '';
+  const displayName = assigneeName || fallbackName;
 
   // Отметка о выполнении: done <-> todo (для «В процессе» есть кнопка в Kanban)
   const handleStatusToggle = () => {
     void updateTaskStatus(task.id, isDone ? 'todo' : 'done');
+  };
+
+  const handleAssigneeChange = (value: string) => {
+    // '' — «Не назначен» → null в БД
+    void updateTaskAssignee(task.id, value || null);
   };
 
   const handleDelete = () => {
@@ -85,6 +136,29 @@ export function TaskCard({ task }: TaskCardProps) {
                 {new Date(`${task.due_date}T00:00:00`).toLocaleDateString('ru-RU')}
               </span>
             )}
+          </div>
+
+          {/* Исполнитель: аватар + имя, смена — нативным select (мобильный пикер).
+              stopPropagation не нужен: внутри карточки нет клика по всей площади. */}
+          <div className="mt-2 flex items-center gap-2 border-t border-gray-100 pt-2">
+            <AssigneeAvatar name={displayName} avatarUrl={task.assignee?.avatar_url ?? null} />
+            <select
+              value={task.assignee_id ?? ''}
+              onChange={(e) => handleAssigneeChange(e.target.value)}
+              aria-label="Исполнитель задачи"
+              className="-ml-1 min-h-[32px] max-w-full cursor-pointer truncate rounded bg-transparent px-1 py-0.5 text-xs text-gray-600 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">Не назначен</option>
+              {members.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.full_name || 'Без имени'}
+                </option>
+              ))}
+              {/* Если текущий исполнитель не в списке (вышел из семьи) — показываем его id-метку */}
+              {task.assignee_id && !members.some((m) => m.id === task.assignee_id) && (
+                <option value={task.assignee_id}>{displayName || 'Бывший участник'}</option>
+              )}
+            </select>
           </div>
         </div>
 

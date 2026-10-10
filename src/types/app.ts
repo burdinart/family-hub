@@ -56,12 +56,21 @@ export interface Event {
   created_at: string;
 }
 
+/** Краткая карточка исполнителя — «виртуальное» поле, приходит через join с profiles */
+export interface TaskAssignee {
+  id: string;
+  full_name: string;
+  avatar_url: string | null;
+}
+
 /** Задача (таблица tasks) */
 export interface Task {
   id: string;
   family_id: string;
   title: string;
   assignee_id: string | null;
+  /** Исполнитель задачи (join assignee_id → profiles); null — не назначен / нет данных */
+  assignee?: TaskAssignee | null;
   status: TaskStatus;
   /** ISO date: YYYY-MM-DD или null */
   due_date: string | null;

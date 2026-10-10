@@ -46,6 +46,8 @@ interface TasksState {
   addTask: (task: NewTask) => Promise<void>;
   /** Смена статуса с оптимистичным обновлением и откатом при ошибке */
   updateTaskStatus: (taskId: string, status: TaskStatus) => Promise<void>;
+  /** Смена исполнителя (null — «Не назначен») с оптимистичным обновлением */
+  updateTaskAssignee: (taskId: string, assigneeId: string | null) => Promise<void>;
   /** Удаление с оптимистичным обновлением и откатом при ошибке */
   deleteTask: (taskId: string) => Promise<void>;
 
@@ -68,15 +70,39 @@ export const useTasksStore = create<TasksState>((set, get) => ({
   addTask: async (task) => {
     try {
       const created = await tasksService.createTask(task);
-      // Геймификация: +1 за создание (делегирование) задачи автором
+      // Геймификация: +1 за создание задачи автору.
+      // Если задача делегирована другому члену семьи — это «делегирование»,
+      // баллы всё равно получает создатель (category 'task_create').
       const me = useAuthStore.getState().user;
       if (me && created.created_by === me.id) {
-        await awardPoints(me.id, 1, `Создана задача: ${created.title}`, 'task_create', created.id);
+        const delegated = Boolean(created.assignee_id && created.assignee_id !== me.id);
+        const reason = delegated
+          ? `Делегирована задача: ${created.title}`
+          : `Создана задача: ${created.title}`;
+        await awardPoints(me.id, 1, reason, 'task_create', created.id);
       }
       // Список придёт через realtime-событие insert
     } catch (err) {
       console.error('Ошибка создания задачи:', err);
       set({ error: 'Не удалось создать задачу. Попробуйте ещё раз.' });
+    }
+  },
+
+  updateTaskAssignee: async (taskId, assigneeId) => {
+    // Оптимистично меняем исполнителя в локальном списке
+    const prev = get().tasks;
+    set({
+      tasks: prev.map((t) =>
+        t.id === taskId ? { ...t, assignee_id: assigneeId, assignee: null } : t,
+      ),
+    });
+    try {
+      await tasksService.updateTaskAssignee(taskId, assigneeId);
+      // Полные данные исполнителя (embed имени/аватара) придут через
+      // realtime-событие update — оно перезагрузит список с join.
+    } catch (err) {
+      console.error('Ошибка смены исполнителя:', err);
+      set({ tasks: prev, error: 'Не удалось изменить исполнителя.' }); // откат
     }
   },
 

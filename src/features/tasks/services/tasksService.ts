@@ -4,18 +4,42 @@
 // задачи семьи перезагружаем полный список (просто и надёжно для небольшого объёма).
 
 import { supabase } from '@/config/supabase';
-import type { Task, TaskPriority, TaskStatus } from '@/types';
+import type { Task, TaskAssignee, TaskPriority, TaskStatus } from '@/types';
 
-/** Payload для создания задачи (id/created_at генерирует БД) */
-export type NewTask = Omit<Task, 'id' | 'created_at'>;
+/**
+ * Payload для создания задачи (id/created_at генерирует БД).
+ * assignee — виртуальное поле из join, в insert не попадает.
+ */
+export type NewTask = Omit<Task, 'id' | 'created_at' | 'assignee'>;
 
-/** Приведение строки БД к доменному Task без any: unknown + явные поля */
+/**
+ * Приведение строки БД к доменному Task без any: unknown + явные поля.
+ * Поле `assignee` появляется, если запрос использовал embed
+ * (`assignee:assignee_id ( id, full_name, avatar_url )`).
+ */
 function toTask(row: Record<string, unknown>): Task {
+  // Embed может прийти объектом (many-to-one через FK) или массивом объектов —
+  // нормализуем оба варианта к первому элементу.
+  const rawAssignee = row.assignee;
+  let assignee: TaskAssignee | null = null;
+  if (rawAssignee && typeof rawAssignee === 'object') {
+    const obj = Array.isArray(rawAssignee) ? rawAssignee[0] : rawAssignee;
+    if (obj && typeof obj === 'object' && 'id' in obj) {
+      const o = obj as Record<string, unknown>;
+      assignee = {
+        id: String(o.id),
+        full_name: String(o.full_name ?? ''),
+        avatar_url: (o.avatar_url as string | null) ?? null,
+      };
+    }
+  }
+
   return {
     id: String(row.id),
     family_id: String(row.family_id),
     title: String(row.title),
     assignee_id: (row.assignee_id as string | null) ?? null,
+    assignee,
     status: String(row.status ?? 'todo') as TaskStatus,
     due_date: (row.due_date as string | null) ?? null,
     priority: String(row.priority ?? 'medium') as TaskPriority,
@@ -52,16 +76,41 @@ export const tasksService = {
     };
   },
 
-  /** Все задачи семьи (свежие — сверху) */
+  /**
+   * Все задачи семьи (свежие — сверху) вместе с карточками исполнителей.
+   * Embed `assignee:assignee_id (...)` работает потому, что в БД есть FK
+   * tasks.assignee_id → auth.users, а profiles.id — тот же uuid, что и auth.users.id.
+   * Если embed недоступен (старая схема), откатываемся на обычный select('*'):
+   * карточки задач тогда покажут имя из кэша членов семьи (fallback в TaskCard).
+   */
   async getTasksByFamily(familyId: string): Promise<Task[]> {
     const { data, error } = await supabase
       .from('tasks')
-      .select('*')
+      .select(
+        `*,
+         assignee:assignee_id ( id, full_name, avatar_url )`,
+      )
       .eq('family_id', familyId)
       .order('created_at', { ascending: false });
 
+    if (error) {
+      console.warn('Embed assignee недоступен, загружаем задачи без него:', error.message);
+      const fallback = await supabase
+        .from('tasks')
+        .select('*')
+        .eq('family_id', familyId)
+        .order('created_at', { ascending: false });
+      if (fallback.error) throw fallback.error;
+      return (fallback.data ?? []).map((row) => toTask(row as Record<string, unknown>));
+    }
+
+    return (data ?? []).map((row) => toTask(row as Record<string, unknown>));
+  },
+
+  /** Смена исполнителя задачи (null — снять назначение) */
+  async updateTaskAssignee(taskId: string, assigneeId: string | null): Promise<void> {
+    const { error } = await supabase.from('tasks').update({ assignee_id: assigneeId }).eq('id', taskId);
     if (error) throw error;
-    return (data ?? []).map(toTask);
   },
 
   /** Создание задачи; возвращает созданную строку */
