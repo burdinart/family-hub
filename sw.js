@@ -61,8 +61,11 @@ self.addEventListener('notificationclick', (event) => {
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      // Сначала ищем вкладку нашего приложения (учитываем base-путь /family-hub/),
+      // иначе фокус уводился бы на любую вкладку того же домена (например, GitHub).
+      const appPath = new URL('./', self.location).pathname;
       for (const client of clientList) {
-        if (client.url.includes(self.location.origin) && 'focus' in client) {
+        if ('focus' in client && client.url.startsWith(self.location.origin + appPath)) {
           return client.focus();
         }
       }
