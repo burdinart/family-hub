@@ -5,6 +5,8 @@
 
 import { create } from 'zustand';
 import { eventsService, type NewEvent, type EventPatch } from '../services/eventsService';
+import { useAuthStore } from '@/store/authStore';
+import { createNotification, getOtherFamilyMembers } from '@/services/notificationHelper';
 import type { Event } from '@/types';
 
 interface EventsState {
@@ -50,6 +52,26 @@ export const useEventsStore = create<EventsState>((set, get) => ({
     try {
       const created = await eventsService.createEvent(eventData);
       set((state) => ({ events: [...state.events, created] }));
+
+      // Уведомления: всех членов семьи, КРОМЕ создателя (правило проекта).
+      // createNotification сам глушит ошибки — сбой пуша не сломает создание события.
+      const me = useAuthStore.getState().user;
+      if (me) {
+        const when = created.time ? `${created.date} ${created.time}` : created.date;
+        const others = await getOtherFamilyMembers(created.family_id, me.id);
+        for (const member of others) {
+          await createNotification({
+            familyId: created.family_id,
+            userId: member.id,
+            senderId: me.id,
+            title: '📅 Новое событие',
+            body: `${me.full_name ?? 'Кто-то'} добавил: «${created.title}» (${when})`,
+            type: 'event',
+            referenceId: created.id,
+            referenceType: 'event',
+          });
+        }
+      }
     } catch (err) {
       console.error('Ошибка создания события:', err);
       set({ error: 'Не удалось создать событие' });

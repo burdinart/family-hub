@@ -5,6 +5,8 @@
 import { create } from 'zustand';
 import type { Document, DocumentCategory } from '@/types';
 import { ratingsService } from '@/features/ratings/services/ratingsService';
+import { createNotification, getOtherFamilyMembers } from '@/services/notificationHelper';
+import { useAuthStore } from '@/store/authStore';
 import { describeError, documentsService, type NewDocumentInput } from '../services/documentsService';
 
 interface DocumentsState {
@@ -73,6 +75,23 @@ export const useDocumentsStore = create<DocumentsState>((set, get) => ({
           );
         } catch (pointsErr) {
           console.error('Не удалось начислить баллы за документ:', pointsErr);
+        }
+
+        // Уведомления: остальных членов семьи, КРОМЕ загрузившего (правило проекта).
+        if (meId) {
+          const others = await getOtherFamilyMembers(input.familyId, meId);
+          for (const member of others) {
+            await createNotification({
+              familyId: input.familyId,
+              userId: member.id,
+              senderId: meId,
+              title: '📁 Новый документ в сейфе',
+              body: `${input.uploadedByName ?? useAuthStore.getState().user?.full_name ?? 'Кто-то'} загрузил(а): «${doc.title}»`,
+              type: 'document',
+              referenceId: doc.id,
+              referenceType: 'document',
+            });
+          }
         }
       }
       // Оптимистично добавляем в начало списка (realtime затем синхронизирует)

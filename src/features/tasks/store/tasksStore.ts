@@ -7,6 +7,10 @@ import { create } from 'zustand';
 import { tasksService, type NewTask } from '../services/tasksService';
 import { getTaskPoints, ratingsService } from '@/features/ratings/services/ratingsService';
 import { useAuthStore } from '@/store/authStore';
+import {
+  createNotification,
+  getOtherFamilyMembers,
+} from '@/services/notificationHelper';
 import type { Task, TaskStatus } from '@/types';
 
 /**
@@ -80,6 +84,36 @@ export const useTasksStore = create<TasksState>((set, get) => ({
           ? `Делегирована задача: ${created.title}`
           : `Создана задача: ${created.title}`;
         await awardPoints(me.id, 1, reason, 'task_create', created.id);
+
+        // Уведомления (не уведомляем автора действия — правило проекта):
+        // - есть исполнитель-другой участник → пушим только ему («назначил вам»);
+        // - исполнитель не назначен → пушим всем остальным членам семьи.
+        if (delegated && created.assignee_id) {
+          await createNotification({
+            familyId: created.family_id,
+            userId: created.assignee_id,
+            senderId: me.id,
+            title: '📋 Новая задача',
+            body: `${me.full_name ?? 'Кто-то'} назначил вам: «${created.title}»`,
+            type: 'task',
+            referenceId: created.id,
+            referenceType: 'task',
+          });
+        } else if (!created.assignee_id) {
+          const others = await getOtherFamilyMembers(created.family_id, me.id);
+          for (const member of others) {
+            await createNotification({
+              familyId: created.family_id,
+              userId: member.id,
+              senderId: me.id,
+              title: '📋 Новая задача в семье',
+              body: `${me.full_name ?? 'Кто-то'} создал(а) задачу: «${created.title}»`,
+              type: 'task',
+              referenceId: created.id,
+              referenceType: 'task',
+            });
+          }
+        }
       }
       // Список придёт через realtime-событие insert
     } catch (err) {
@@ -127,6 +161,21 @@ export const useTasksStore = create<TasksState>((set, get) => ({
         const winnerId = task.assignee_id ?? me?.id ?? null;
         if (winnerId) {
           await awardPoints(winnerId, points, reason, 'task', task.id);
+        }
+
+        // Уведомление: автора задачи информируем о выполнении (если закрыл НЕ автор).
+        // Себя-автора действия не уведомляем — правило проекта.
+        if (me && task.created_by && task.created_by !== me.id) {
+          await createNotification({
+            familyId: task.family_id,
+            userId: task.created_by,
+            senderId: me.id,
+            title: '✅ Задача выполнена',
+            body: `${me.full_name ?? 'Кто-то'} выполнил(а): «${task.title}»`,
+            type: 'task',
+            referenceId: task.id,
+            referenceType: 'task',
+          });
         }
       }
     } catch (err) {

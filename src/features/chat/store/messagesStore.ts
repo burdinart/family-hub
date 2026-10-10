@@ -6,6 +6,8 @@
 import { create } from 'zustand';
 import { messagesService } from '../services/messagesService';
 import { describeError } from '@/features/vault/services/documentsService';
+import { useAuthStore } from '@/store/authStore';
+import { createNotification, getOtherFamilyMembers, truncateText } from '@/services/notificationHelper';
 import type { Message } from '@/types';
 
 interface MessagesState {
@@ -69,7 +71,25 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
   sendMessage: async (familyId, senderId, text) => {
     set({ isSending: true, error: null });
     try {
-      await messagesService.sendMessage(familyId, senderId, text);
+      const created = await messagesService.sendMessage(familyId, senderId, text);
+      // Уведомления: всем членам семьи, КРОМЕ отправителя (правило проекта).
+      // Ошибки пуша глушит createNotification — доставка сообщения важнее.
+      const me = useAuthStore.getState().user;
+      if (me && me.id === senderId) {
+        const others = await getOtherFamilyMembers(familyId, senderId);
+        for (const member of others) {
+          await createNotification({
+            familyId,
+            userId: member.id,
+            senderId,
+            title: '💬 Новое сообщение',
+            body: `${me.full_name ?? 'Кто-то'}: ${truncateText(text)}`,
+            type: 'chat',
+            referenceId: created.id,
+            referenceType: 'message',
+          });
+        }
+      }
       // Сообщество доставится через realtime-подписку; но если канал ещё не SUBSCRIBED —
       // страховочная перезагрузка истории гарантирует появление сообщения у автора.
       await get().loadMessages(familyId);

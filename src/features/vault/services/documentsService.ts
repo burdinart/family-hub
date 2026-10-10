@@ -142,6 +142,8 @@ export interface NewDocumentInput {
   expiryDate: string | null;
   description: string | null;
   uploadedBy: string;
+  /** Имя загрузившего (для текста уведомления); если не передано — подставляем из authStore */
+  uploadedByName?: string;
 }
 
 export const documentsService = {
